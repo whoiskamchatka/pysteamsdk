@@ -8,8 +8,9 @@ import pytest
 
 from check_sdk_files import main, problem
 
-# Built at runtime so this file does not trip the guard itself.
-BANNER = b"//====== Copy" + b"right Valve Corporation, All rights reserved. ======\n"
+# Joined at runtime so neither this file nor its __pycache__ trips the guard; "a" + "b" would
+# be folded into one constant by the compiler.
+BANNER = b"".join([b"//====== Copy", b"right Valve Corporation, All rights reserved. ======\n"])
 
 
 @pytest.mark.parametrize(

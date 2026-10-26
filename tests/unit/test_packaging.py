@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 VERSION = pysteamsdk.__version__
 DIST_INFO = f"pysteamsdk-{VERSION}.dist-info"
 DECOYS = {
-    "sdk/public/steam/steam_api.h": b"//====== Copy" + b"right Valve Corporation ======\n",
+    "sdk/public/steam/steam_api.h": b"".join([b"//====== Copy", b"right Valve Corporation\n"]),
     "sdk/redistributable_bin/win64/steam_api64.dll": b"MZ",
     "src/pysteamsdk/steam_api64.dll": b"MZ",
     "src/pysteamsdk/libsteam_api.so": b"\x7fELF",
