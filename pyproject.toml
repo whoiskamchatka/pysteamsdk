@@ -1,0 +1,98 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pysteamsdk"
+dynamic = ["version"]
+description = "Python bindings for the Steamworks SDK"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "whoiskamchatka" }]
+keywords = ["steam", "steamworks", "gamedev", "ctypes", "bindings"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Games/Entertainment",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/whoiskamchatka/pysteamsdk"
+Issues = "https://github.com/whoiskamchatka/pysteamsdk/issues"
+Changelog = "https://github.com/whoiskamchatka/pysteamsdk/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+    "hatchling>=1.27",
+    "mypy==2.4.0",
+    "pytest>=9.1",
+    "ruff==0.17.2",
+]
+dist = [
+    "build==1.6.1",
+    "twine==7.0.0",
+]
+
+[tool.hatch.version]
+path = "src/pysteamsdk/__init__.py"
+
+[tool.hatch.build]
+exclude = [
+    "steam_appid.txt",
+    "*.dll",
+    "*.dylib",
+    "*.so",
+    "*.so.*",
+    "*.lib",
+    "*.exe",
+    "*.pdb",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pysteamsdk"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src", "tests", "tools", "CHANGELOG.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = [".", "src", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PT"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+files = ["src", "tests", "tools"]
+mypy_path = ["tools"]
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+minversion = "9.1"
+testpaths = ["tests"]
+pythonpath = ["tools"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+xfail_strict = true
+filterwarnings = ["error"]
+markers = [
+    "sdk: needs a local Steamworks SDK",
+    "steam: needs a running Steam client and the SDK's native library",
+]
