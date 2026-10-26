@@ -17,6 +17,7 @@ from check_sdk_files import main
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = pysteamsdk.__version__
 DIST_INFO = f"pysteamsdk-{VERSION}.dist-info"
+PACKAGE_FILES = ("__init__.py", "py.typed", "errors.py", "_native/__init__.py", "_native/loader.py")
 DECOYS = {
     "sdk/public/steam/steam_api.h": b"".join([b"//====== Copy", b"right Valve Corporation\n"]),
     "sdk/redistributable_bin/win64/steam_api64.dll": b"MZ",
@@ -73,7 +74,7 @@ def test_wheel_is_pure_and_contains_only_the_package(dist: Path) -> None:
     with zipfile.ZipFile(path) as wheel:
         names = set(wheel.namelist())
         tags = read_message(wheel, "WHEEL")
-    required = {"pysteamsdk/__init__.py", "pysteamsdk/py.typed", f"{DIST_INFO}/licenses/LICENSE"}
+    required = {f"pysteamsdk/{name}" for name in PACKAGE_FILES} | {f"{DIST_INFO}/licenses/LICENSE"}
     assert {name.split("/")[0] for name in names} == {"pysteamsdk", DIST_INFO}
     assert required <= names
     assert tags.get_all("Tag") == ["py3-none-any"]
@@ -97,7 +98,7 @@ def test_sdist_contains_only_sources(dist: Path) -> None:
     names = sdist_names(dist)
     allowed = {"PKG-INFO", "pyproject.toml", "README.md", "LICENSE", "CHANGELOG.md"}
     assert {n.split("/")[0] for n in names} <= allowed | {"src", "tests", "tools"}
-    assert {"src/pysteamsdk/__init__.py", "src/pysteamsdk/py.typed", "LICENSE"} <= names
+    assert {f"src/pysteamsdk/{name}" for name in PACKAGE_FILES} | {"LICENSE"} <= names
 
 
 def test_distributions_contain_no_sdk_files(dist: Path) -> None:

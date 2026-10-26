@@ -19,7 +19,15 @@ def run_python(code: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_imports_without_steam() -> None:
-    result = run_python("import pysteamsdk; print(pysteamsdk.__version__)")
+    result = run_python(
+        """
+        import pysteamsdk
+        import pysteamsdk._native.loader
+        import pysteamsdk.errors
+
+        print(pysteamsdk.__version__)
+        """
+    )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == pysteamsdk.__version__
 
@@ -43,6 +51,8 @@ def test_import_loads_no_native_library() -> None:
                 setattr(_ctypes, name, record)
 
         import pysteamsdk
+        import pysteamsdk._native.loader
+        import pysteamsdk.errors
 
         sys.exit(f"native library loaded: {loads}" if loads else 0)
         """
@@ -58,6 +68,8 @@ def test_import_leaves_process_environment_unchanged() -> None:
 
         before = dict(os.environ), os.getcwd()
         import pysteamsdk
+        import pysteamsdk._native.loader
+        import pysteamsdk.errors
 
         sys.exit(0 if (dict(os.environ), os.getcwd()) == before else "environment changed")
         """

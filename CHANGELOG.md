@@ -11,3 +11,5 @@ All notable changes to this project are documented in this file. The format foll
 - Typed, dependency-free `pysteamsdk` package for 64-bit CPython 3.11+.
 - CI on Windows, Linux and macOS: lint, format, type and test checks, package builds, and a
   check that keeps Steamworks SDK files out of the repository and distributions.
+- Internal loader that finds, checks and loads the Steamworks library without initializing
+  Steam, and the exceptions in `pysteamsdk.errors`.

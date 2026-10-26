@@ -46,9 +46,18 @@ The SDK is proprietary and must never enter the repository or its packages.
   file you wrote yourself, rename the file or adjust the rule in the same pull request and say
   why.
 
+Tests marked `sdk` load the native library from your SDK in a child process. They never
+initialize Steam, write `steam_appid.txt` or set environment variables, and CI does not run
+them. Point `STEAMWORKS_SDK` at the SDK folder to run them:
+
+```sh
+STEAMWORKS_SDK=sdk pytest -m sdk          # PowerShell: $env:STEAMWORKS_SDK = "sdk"; pytest -m sdk
+```
+
 ## Pull requests
 
 - One topic per pull request, with tests for any behavior change.
 - Add a line under "Unreleased" in [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
 - Commit subjects are short and imperative, e.g. "Add native library loader".
 - Comments explain why something is done, not what the code does.
+
