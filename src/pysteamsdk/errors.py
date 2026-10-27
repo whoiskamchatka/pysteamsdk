@@ -43,3 +43,28 @@ class MissingExportsError(IncompatibleLibraryError):
 
 class LibraryLoadError(NativeLibraryError):
     """The operating system failed to load the library."""
+
+
+class InitError(SteamError):
+    """SteamAPI_InitFlat reported a failure."""
+
+    def __init__(self, message: str, *, result: int | None = None, reason: str = "") -> None:
+        super().__init__(message)
+        self.result = result
+        self.reason = reason
+
+
+class NoSteamClientError(InitError):
+    """InitFlat returned NoSteamClient: Steam could not be reached, probably not running."""
+
+
+class VersionMismatchError(InitError):
+    """InitFlat returned VersionMismatch: the Steam client appears to be out of date."""
+
+
+class LifecycleError(SteamError):
+    """Steam was initialized or shut down in an unsupported order."""
+
+
+class NotInitializedError(LifecycleError):
+    """Steam is not initialized, or has been shut down."""

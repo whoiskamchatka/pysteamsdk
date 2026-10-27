@@ -17,7 +17,14 @@ from check_sdk_files import main
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = pysteamsdk.__version__
 DIST_INFO = f"pysteamsdk-{VERSION}.dist-info"
-PACKAGE_FILES = ("__init__.py", "py.typed", "errors.py", "_native/__init__.py", "_native/loader.py")
+PACKAGE_FILES = (
+    "__init__.py",
+    "py.typed",
+    "errors.py",
+    "_native/__init__.py",
+    "_native/loader.py",
+    "_native/lifecycle.py",
+)
 DECOYS = {
     "sdk/public/steam/steam_api.h": b"".join([b"//====== Copy", b"right Valve Corporation\n"]),
     "sdk/redistributable_bin/win64/steam_api64.dll": b"MZ",
