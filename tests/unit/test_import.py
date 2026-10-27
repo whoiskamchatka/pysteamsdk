@@ -25,11 +25,11 @@ def test_imports_without_steam() -> None:
         import pysteamsdk._native.loader
         import pysteamsdk.errors
 
-        print(pysteamsdk.__version__)
+        print(pysteamsdk.__version__, pysteamsdk.is_initialized())
         """
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == pysteamsdk.__version__
+    assert result.stdout.split() == [pysteamsdk.__version__, "False"]
 
 
 def test_import_loads_no_native_library() -> None:

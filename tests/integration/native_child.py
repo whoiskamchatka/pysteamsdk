@@ -11,7 +11,7 @@ from pysteamsdk.errors import SteamError
 STEAMCLIENT = "steamclient64.dll" if sys.platform == "win32" else "steamclient"
 
 
-def native_environment() -> bytes:
+def native_environment() -> list[str]:
     if sys.platform == "win32":
         kernel32 = ctypes.WinDLL("kernel32")
         kernel32.GetEnvironmentStringsW.restype = ctypes.c_void_p
@@ -21,9 +21,9 @@ def native_environment() -> bytes:
         length = 0
         while units[length] or units[length + 1]:
             length += 1
-        snapshot = ctypes.string_at(block, 2 * length)
+        snapshot = ctypes.string_at(block, 2 * length).decode("utf-16-le")
         kernel32.FreeEnvironmentStringsW(block)
-        return snapshot
+        return sorted(snapshot.split("\0"))
     else:
         libc = ctypes.CDLL(None)
         if sys.platform == "darwin":
@@ -34,7 +34,7 @@ def native_environment() -> bytes:
         entries: list[bytes] = []
         while (entry := environ[len(entries)]) is not None:
             entries.append(entry)
-        return b"\n".join(entries)
+        return sorted(entry.decode(errors="replace") for entry in entries)
 
 
 def mapped(name: str) -> bool:

@@ -13,3 +13,5 @@ All notable changes to this project are documented in this file. The format foll
   check that keeps Steamworks SDK files out of the repository and distributions.
 - Internal loader that finds, checks and loads the Steamworks library without initializing
   Steam, and the exceptions in `pysteamsdk.errors`.
+- `pysteamsdk.init()`, `shutdown()` and `is_initialized()`: one Steam session per process,
+  with typed errors that carry Steam's own failure message.

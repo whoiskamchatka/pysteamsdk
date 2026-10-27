@@ -25,6 +25,7 @@ REQUIRED_EXPORTS = (
     "SteamAPI_InitFlat",
     "SteamAPI_Shutdown",
     "SteamAPI_GetHSteamPipe",
+    "SteamAPI_GetHSteamUser",
     "SteamAPI_ManualDispatch_Init",
     "SteamAPI_ManualDispatch_RunFrame",
     "SteamAPI_ManualDispatch_GetNextCallback",
