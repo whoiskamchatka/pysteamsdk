@@ -34,6 +34,20 @@ twine check --strict dist/*
 python tools/check_sdk_files.py dist
 ```
 
+## Steamworks metadata
+
+`codegen/` is maintainer tooling that reads a local SDK's `steam_api.json` and headers into a
+normalized metadata format. It never ships in the wheel and needs no Steam client or SDK binary.
+
+```sh
+python -m codegen inventory sdk                     # counts, cross-checks and open issues
+python -m codegen extract sdk -o ../metadata.json   # the normalized metadata as JSON
+```
+
+The extracted metadata is derived from Valve's SDK, so it stays out of the repository until a
+redistribution review allows otherwise; `extract` refuses to write inside it. The tests in
+`tests/codegen` use small invented fixtures.
+
 ## Steamworks SDK
 
 The SDK is proprietary and must never enter the repository or its packages.
