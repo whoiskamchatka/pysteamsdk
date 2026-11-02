@@ -46,12 +46,29 @@ The SDK is proprietary and must never enter the repository or its packages.
   file you wrote yourself, rename the file or adjust the rule in the same pull request and say
   why.
 
-Tests marked `sdk` load the native library from your SDK in a child process. They never
-initialize Steam, write `steam_appid.txt` or set environment variables, and CI does not run
-them. Point `STEAMWORKS_SDK` at the SDK folder to run them:
+Tests marked `sdk` load the native library from your SDK in a child process, and CI does not
+run them. They call `SteamAPI_InitFlat` only when no Steam client is running and no app ID is
+set, so it fails without touching Steam. Point `STEAMWORKS_SDK` at the SDK folder to run them:
 
 ```sh
 STEAMWORKS_SDK=sdk pytest -m sdk          # PowerShell: $env:STEAMWORKS_SDK = "sdk"; pytest -m sdk
+```
+
+The one test marked `steam` initializes your running Steam client as Spacewar (app ID 480),
+Valve's test app, so your Steam activity can show Spacewar for a few seconds. It is skipped
+unless all three of these are set, and CI never sets them:
+
+- `STEAMWORKS_SDK` to the SDK folder
+- `STEAMWORKS_APP_ID` to exactly `480`
+- `PYSTEAMSDK_RUN_LIVE_STEAM` to exactly `1`
+
+It writes `steam_appid.txt` only into a new temporary folder and deletes it afterwards. Close
+any running game first, and set the variables only for the command that runs the test:
+
+```powershell
+$env:STEAMWORKS_SDK = "sdk"; $env:STEAMWORKS_APP_ID = "480"; $env:PYSTEAMSDK_RUN_LIVE_STEAM = "1"
+try { pytest -m steam -s }
+finally { Remove-Item Env:STEAMWORKS_SDK, Env:STEAMWORKS_APP_ID, Env:PYSTEAMSDK_RUN_LIVE_STEAM }
 ```
 
 ## Pull requests

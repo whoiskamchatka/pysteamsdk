@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -10,7 +11,11 @@ from pysteamsdk._native import loader
 from pysteamsdk._native.loader import ENV_VAR
 
 SDK = os.environ.get("STEAMWORKS_SDK", "")
+# Valve's public test app, Spacewar. The live test accepts no other ID.
+SPACEWAR = "480"
 APP_ID = os.environ.get("STEAMWORKS_APP_ID", "")
+# A separate opt-in, since STEAMWORKS_APP_ID may be set for other reasons.
+LIVE_STEAM = os.environ.get("PYSTEAMSDK_RUN_LIVE_STEAM", "")
 CHILD = Path(__file__).with_name("lifecycle_child.py")
 
 pytestmark = [
@@ -24,7 +29,12 @@ def host_library() -> Path:
     return Path(SDK, "redistributable_bin", folder, name).resolve()
 
 
-def run_child(cwd: Path, scenario: str, **env: str) -> dict[str, object]:
+def redact(output: str) -> str:
+    # steam_api prints the user's 64-bit Steam ID, a 17-digit number, when init succeeds.
+    return re.sub(r"\b\d{17}\b", "<steam id>", output)
+
+
+def run_child(cwd: Path, report: Path, scenario: str, **env: str) -> dict[str, object]:
     # Without SteamAppId and friends the child looks like a process Steam did not launch.
     inherited = {
         key: value
@@ -32,7 +42,7 @@ def run_child(cwd: Path, scenario: str, **env: str) -> dict[str, object]:
         if not key.upper().startswith("STEAM") and key != ENV_VAR
     }
     result = subprocess.run(
-        [sys.executable, str(CHILD), scenario, str(host_library())],
+        [sys.executable, str(CHILD), scenario, str(host_library()), str(report)],
         cwd=cwd,
         env=inherited | env,
         capture_output=True,
@@ -40,9 +50,9 @@ def run_child(cwd: Path, scenario: str, **env: str) -> dict[str, object]:
         timeout=120,
         check=False,
     )
-    assert result.returncode == 0, result.stderr
-    report: dict[str, object] = json.loads(result.stdout)
-    return report
+    assert result.returncode == 0, redact(result.stderr + result.stdout)
+    outcome: dict[str, object] = json.loads(report.read_text(encoding="utf-8"))
+    return outcome
 
 
 def test_init_without_a_steam_client_fails_cleanly(tmp_path: Path) -> None:
@@ -52,7 +62,7 @@ def test_init_without_a_steam_client_fails_cleanly(tmp_path: Path) -> None:
     cwd.mkdir()
     # On Linux and macOS steam_api finds Steam through $HOME, so an empty home hides it.
     env = {} if sys.platform == "win32" else {"HOME": str(home)}
-    report = run_child(cwd, "without-steam", **env)
+    report = run_child(cwd, tmp_path / "report.json", "without-steam", **env)
     if "skipped" in report:
         pytest.skip(f"{report['skipped']}; init would reach it")
     # The SDK promises no specific code here: Linux without Steam reports FailedGeneric.
@@ -69,18 +79,34 @@ def test_init_without_a_steam_client_fails_cleanly(tmp_path: Path) -> None:
 
 
 @pytest.mark.steam
-@pytest.mark.skipif(
-    not APP_ID,
-    reason="initializes Steam and shows the app as running; set STEAMWORKS_APP_ID to opt in",
-)
 def test_init_and_shutdown_with_a_running_steam_client(tmp_path: Path) -> None:
-    (tmp_path / "steam_appid.txt").write_text(APP_ID)
-    report = run_child(tmp_path, "init-shutdown")
+    # Checked in the body, not by a skipif marker, so disabling skip markers cannot bypass it.
+    if not (SDK and APP_ID == SPACEWAR and LIVE_STEAM == "1"):
+        pytest.skip(
+            "initializes Steam as Spacewar, which shows it as running; to opt in, set "
+            f"STEAMWORKS_SDK, STEAMWORKS_APP_ID={SPACEWAR} and PYSTEAMSDK_RUN_LIVE_STEAM=1"
+        )
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    app_id_file = cwd / "steam_appid.txt"
+    # Exclusive create, outside the try, so a file this test did not write is never deleted.
+    with app_id_file.open("x", encoding="ascii") as file:
+        file.write(SPACEWAR)
+    try:
+        report = run_child(cwd, tmp_path / "report.json", "init-shutdown")
+    finally:
+        app_id_file.unlink()
     print(json.dumps(report, indent=2))
     assert report["first"] == {"error": None}
-    assert report["pipe"]
-    assert report["user"]
+    assert report["initialized"] is True
+    # The SDK defines no invalid handle, so nonzero handles are an expectation, not a promise.
+    assert report["pipe"] != 0
+    assert report["user"] != 0
+    assert report["steamclient_loaded"] is True
     rejected = {"error": "LifecycleError", "result": None, "reason": ""}
     assert report["duplicate"] == rejected
+    assert report["session_after_shutdown"] == "NotInitializedError"
+    assert report["session_closed"] is True
     assert report["initialized_after_shutdown"] is False
     assert report["again"] == rejected
+    assert report["cwd_files"] == ["steam_appid.txt"]
