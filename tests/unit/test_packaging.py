@@ -33,6 +33,9 @@ DECOYS = {
     "src/pysteamsdk/libsteam_api.dylib": b"\xcf\xfa\xed\xfe",
     "src/pysteamsdk/steam_appid.txt": b"480",
     "steam_appid.txt": b"480",
+    "codegen/steam_api.json": b"{}",
+    "codegen/steam_api_flat.h": b"S_API void f();",
+    "tests/codegen/isteamwidgets.h": b"S_API void g();",
 }
 
 
@@ -42,7 +45,7 @@ def dist(tmp_path_factory: pytest.TempPathFactory) -> Path:
     # .gitignore is left out on purpose: the packaging config alone must keep SDK files out.
     for name in ("pyproject.toml", "README.md", "LICENSE", "CHANGELOG.md"):
         shutil.copy2(ROOT / name, project / name)
-    for name in ("src", "tests", "tools"):
+    for name in ("src", "codegen", "tests", "tools"):
         shutil.copytree(ROOT / name, project / name, ignore=shutil.ignore_patterns("__pycache__"))
     for name, data in DECOYS.items():
         (project / name).parent.mkdir(parents=True, exist_ok=True)
@@ -104,8 +107,10 @@ def test_wheel_metadata(dist: Path) -> None:
 def test_sdist_contains_only_sources(dist: Path) -> None:
     names = sdist_names(dist)
     allowed = {"PKG-INFO", "pyproject.toml", "README.md", "LICENSE", "CHANGELOG.md"}
-    assert {n.split("/")[0] for n in names} <= allowed | {"src", "tests", "tools"}
+    assert {n.split("/")[0] for n in names} <= allowed | {"src", "codegen", "tests", "tools"}
     assert {f"src/pysteamsdk/{name}" for name in PACKAGE_FILES} | {"LICENSE"} <= names
+    # The generator ships in the sdist, with its tests, but never in the wheel.
+    assert {"codegen/__init__.py", "codegen/__main__.py", "codegen/ir.py"} <= names
 
 
 def test_distributions_contain_no_sdk_files(dist: Path) -> None:
