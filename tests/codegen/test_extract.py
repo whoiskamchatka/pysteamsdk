@@ -25,6 +25,7 @@ def test_a_consistent_sdk_extracts_without_errors_or_warnings(make_sdk: MakeSdk)
         "public/steam/iwidgets.h",
         "public/steam/steam_api_flat.h",
         "public/steam/widget_api.h",
+        "public/steam/widget_types.h",
         "Readme.txt",
     ]
     (flat_typedef,) = [t for t in metadata.typedefs if t.source.startswith("steam_api_flat.h")]
@@ -148,3 +149,24 @@ def test_issues_are_sorted_by_severity_then_code(make_sdk: MakeSdk, flat_header:
     metadata = extract(make_sdk(flat=flat_header.replace("int cch );", "long cch );"))).metadata
     order = [(ir.SEVERITIES.index(i.severity), i.code, i.source) for i in metadata.issues]
     assert order == sorted(order)
+
+
+def test_layouts_add_to_the_issues_without_losing_any(
+    make_sdk: MakeSdk, api: dict[str, Any]
+) -> None:
+    pytest.importorskip("clang.cindex", reason="needs the codegen dependency group")
+    api["consts"].append({"constname": "k_flWidgetHalf", "consttype": "float", "constval": "1.f/2"})
+    sdk = make_sdk(api)
+    plain = extract(sdk).metadata
+    laid_out = extract(sdk, targets=("linux-x86_64",)).metadata
+    assert ("warning", "unevaluated-constant") in codes(plain)
+    assert laid_out.issues == plain.issues
+    assert plain.abi is None
+    assert laid_out.abi is not None
+    assert [item.target for item in laid_out.abi.targets] == ["linux-x86_64"]
+
+
+def test_unknown_layout_targets_are_refused(make_sdk: MakeSdk) -> None:
+    pytest.importorskip("clang.cindex", reason="needs the codegen dependency group")
+    with pytest.raises(MetadataError, match="unknown targets: vax"):
+        extract(make_sdk(), targets=("vax",))

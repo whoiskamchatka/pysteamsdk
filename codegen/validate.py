@@ -2,13 +2,15 @@
 
 Errors mean that declarations conflict or refer to the wrong kind of declaration. A type name
 that nothing declares is only a warning: steam_api.json leaves out several legitimate SDK types,
-and codegen/overrides.toml locates the known ones as external types.
+and codegen/overrides.toml locates the known ones as external types. Layouts are checked by
+codegen.abi.checks.
 """
 
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 
 from codegen import ir
+from codegen.abi.checks import check as check_layouts
 from codegen.cdecl import TypeSyntaxError, parse_type
 from codegen.cexpr import evaluate_constants
 
@@ -59,6 +61,7 @@ def validate(metadata: ir.Metadata) -> list[ir.Issue]:
         *_typedef_cycles(metadata),
         *_type_spellings(metadata),
         *_constant_values(metadata),
+        *check_layouts(metadata),
     ]
 
 

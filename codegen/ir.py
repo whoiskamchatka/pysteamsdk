@@ -1,8 +1,9 @@
 """Steamworks declarations as the SDK states them, with names and type spellings kept verbatim.
 
-There are no sizes or layouts here: steam_api.json has none, and they differ by platform. Nor is
-there Valve prose. Declarations are sorted by name and members keep their source order, so the
-same SDK always serializes to the same bytes.
+steam_api.json has no sizes or layouts, and they differ by platform, so those are kept apart in
+``Metadata.abi``, one set per target, computed by compiling the headers. There is no Valve prose.
+Declarations are sorted by name and members keep their source order, so the same SDK always
+serializes to the same bytes.
 """
 
 from __future__ import annotations
@@ -19,13 +20,16 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 # Bumped whenever the serialized shape or the meaning of a field changes.
-FORMAT = 2
-# Metadata from SDK 1.65 nests 8 levels deep; each nested function pointer adds two.
+FORMAT = 3
+# Metadata from SDK 1.65 nests 11 levels deep; each nested function pointer adds two more and
+# each anonymous record inside another three.
 MAX_DEPTH = 32
 
 Severity = Literal["error", "warning", "note"]
 SEVERITIES: tuple[Severity, ...] = ("error", "warning", "note")
 Declaration = Literal["class", "struct", "typedef", "incomplete"]
+RecordKind = Literal["struct", "union", "class"]
+LayoutStatus = Literal["complete", "opaque", "unsupported"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +224,88 @@ class Input:
 
 
 @dataclass(frozen=True, slots=True)
+class FieldLayout:
+    """A data member as one target lays it out; sizes and offsets are in bytes.
+
+    ``type`` is canonical: a fundamental type such as "unsigned long long"; "enum X", "struct X",
+    "union X" or "class X" with X qualified; "T*" for a pointer, where T may be "void" or
+    "function" and starts with "const " when the innermost target is const; and "T[N]" for an
+    array. An anonymous or unnamed record type is just its keyword, and ``record`` describes it.
+
+    ``size`` and ``align`` are the type's own, before packing or alignas apply. A bit-field has
+    ``bit_offset``, in bits from the start of the record, and ``bit_width`` instead of
+    ``offset``. Anonymous struct and union members and unnamed bit-fields have no name.
+    """
+
+    name: str
+    type: str
+    size: int
+    align: int
+    offset: int | None = None
+    bit_offset: int | None = None
+    bit_width: int | None = None
+    record: RecordLayout | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RecordLayout:
+    """A struct, union or class as one target lays it out.
+
+    A "complete" record has a size, an alignment and every data member. An "opaque" one is
+    declared but never defined, so it only works through pointers. An "unsupported" one uses
+    something these layouts cannot describe, named in ``reason``; its size and alignment are kept
+    when the compiler knows them. ``name`` is qualified, or empty for a record described in place.
+    """
+
+    name: str
+    kind: RecordKind
+    status: LayoutStatus
+    source: str
+    size: int | None = None
+    align: int | None = None
+    fields: tuple[FieldLayout, ...] = ()
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EnumLayout:
+    """``underlying`` is the integer type the target stores the enum as, such as "int"."""
+
+    name: str
+    underlying: str
+    size: int
+
+
+@dataclass(frozen=True, slots=True)
+class TypedefLayout:
+    """``type`` is canonical, as in FieldLayout; size and alignment are None when incomplete."""
+
+    name: str
+    type: str
+    size: int | None
+    align: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class TargetLayout:
+    """The layouts for one key of codegen.abi.TARGETS, compiled for ``triple``."""
+
+    target: str
+    triple: str
+    records: tuple[RecordLayout, ...]
+    enums: tuple[EnumLayout, ...]
+    typedefs: tuple[TypedefLayout, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Abi:
+    """Layouts computed by libclang, whose version is ``clang``, one entry per target."""
+
+    clang: str
+    targets: tuple[TargetLayout, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Metadata:
     # No default, so to_data always writes it.
     format: int
@@ -233,6 +319,8 @@ class Metadata:
     external_types: tuple[ExternalType, ...]
     shared_callbacks: tuple[SharedCallback, ...]
     exports: tuple[Export, ...]
+    # None when the metadata was extracted without computing layouts.
+    abi: Abi | None
     issues: tuple[Issue, ...]
 
     def functions(self) -> tuple[Function, ...]:

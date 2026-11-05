@@ -11,6 +11,12 @@ from codegen.validate import validate
 Change = Callable[[ir.Metadata], ir.Metadata]
 
 
+@pytest.fixture
+def widgets(widgets: ir.Metadata) -> ir.Metadata:
+    # The changes below add declarations without layouts; test_abi_checks.py covers layouts.
+    return replace(widgets, abi=None)
+
+
 def codes(metadata: ir.Metadata) -> Counter[tuple[str, str]]:
     return Counter((issue.severity, issue.code) for issue in validate(metadata))
 
