@@ -4,10 +4,11 @@ import dataclasses
 import hashlib
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from codegen import ir
+from codegen import abi, ir
 from codegen.cexpr import evaluate_constants
 from codegen.extract import api_json, checks, headers
 from codegen.extract.api_json import MetadataError
@@ -18,6 +19,10 @@ from codegen.validate import validate
 __all__ = ["Extraction", "MetadataError", "Overrides", "extract"]
 
 HEADER_FOLDER = Path("public", "steam")
+# Every other header is compiled for layouts. steam_api_internal.h may only be included by
+# steam_api_common.h, which does include it, and isteamps3overlayrenderer.h needs Sony's
+# PlayStation 3 SDK. Any other header that fails to compile is reported, not skipped.
+NOT_COMPILED = frozenset({"steam_api_internal.h", "isteamps3overlayrenderer.h"})
 
 
 @dataclass(frozen=True)
@@ -30,12 +35,18 @@ class Extraction:
     files: dict[str, Path]
 
 
-def extract(sdk: str | os.PathLike[str], overrides: Overrides | None = None) -> Extraction:
+def extract(
+    sdk: str | os.PathLike[str],
+    overrides: Overrides | None = None,
+    targets: Sequence[str] = (),
+) -> Extraction:
     """Read the SDK whose root folder, the one containing public/steam, is ``sdk``.
 
-    Raises MetadataError when steam_api.json or steam_api_flat.h is missing or unreadable.
-    Anything else that looks wrong is reported in the metadata's issues instead, including
-    overrides whose targets no longer match.
+    Layouts are computed for each of ``targets``, keys of codegen.abi.TARGETS, by compiling the
+    SDK headers with libclang. Raises MetadataError when steam_api.json or steam_api_flat.h is
+    missing or unreadable, or when layouts are wanted but libclang is not installed. Anything
+    else that looks wrong is reported in the metadata's issues instead, including overrides that
+    no longer match the SDK and headers that do not compile.
     """
     root = Path(sdk)
     folder = root / HEADER_FOLDER
@@ -82,6 +93,7 @@ def extract(sdk: str | os.PathLike[str], overrides: Overrides | None = None) -> 
         external_types=(),
         shared_callbacks=(),
         exports=tuple(export for export in scan.exports if export.name not in flat_names),
+        abi=None,
         issues=(),
     )
     issues = [*declarations.issues, *flat.issues]
@@ -90,8 +102,13 @@ def extract(sdk: str | os.PathLike[str], overrides: Overrides | None = None) -> 
         issues += found
     constants, found = evaluate_constants(metadata.constants, metadata.typedefs)
     metadata = dataclasses.replace(metadata, constants=constants)
+    issues += found
+    if targets:
+        names = [path.name for path in header_paths if path.name not in NOT_COMPILED]
+        layouts, found = _lay_out(metadata, root, names, targets)
+        metadata = dataclasses.replace(metadata, abi=layouts)
+        issues += found
     issues += [
-        *found,
         *checks.check_flat_header(metadata, flat),
         *checks.check_versions(metadata, scan),
         *validate(metadata),
@@ -101,6 +118,26 @@ def extract(sdk: str | os.PathLike[str], overrides: Overrides | None = None) -> 
     metadata = dataclasses.replace(metadata, issues=ir.sort_issues(issues))
     files = {"sdk": root, "json": json_path, "flat": flat_path}
     return Extraction(metadata, flat, scan, files)
+
+
+def _lay_out(
+    metadata: ir.Metadata, root: Path, names: Sequence[str], targets: Sequence[str]
+) -> tuple[ir.Abi, list[ir.Issue]]:
+    try:
+        # libclang is a maintainer-only dependency, needed only here.
+        from codegen.abi import clang
+    except ImportError as exc:
+        message = f"computing layouts needs libclang ({exc}); install the codegen dependency group"
+        raise MetadataError([message]) from None
+    # steam_api_flat.h includes "steam/steam_api.h", and the headers include each other by name.
+    # It goes first because it includes the headers in the order they need each other.
+    include = [root / "public", root / HEADER_FOLDER]
+    ordered = sorted(names, key=lambda name: (name != headers.FLAT_HEADER, name))
+    source = "".join(f'#include "{name}"\n' for name in ordered)
+    try:
+        return clang.lay_out(source, include, abi.roots(metadata), targets)
+    except clang.LayoutError as exc:
+        raise MetadataError([str(exc)]) from None
 
 
 def _readme_version(readme: bytes) -> str | None:

@@ -38,7 +38,13 @@ Issues = "https://github.com/whoiskamchatka/pysteamsdk/issues"
 Changelog = "https://github.com/whoiskamchatka/pysteamsdk/blob/main/CHANGELOG.md"
 
 [dependency-groups]
+# Maintainer tooling only: codegen computes layouts with libclang. Pinned, because the
+# recorded layouts name the libclang version that produced them.
+codegen = [
+    "libclang==18.1.1",
+]
 dev = [
+    { include-group = "codegen" },
     "hatchling>=1.27",
     "mypy==2.4.0",
     "pytest>=9.1",
@@ -88,6 +94,11 @@ python_version = "3.11"
 files = ["src", "codegen", "tests", "tools"]
 mypy_path = ["tools"]
 warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# libclang's bindings ship no type information.
+module = ["clang", "clang.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "9.1"

@@ -112,7 +112,8 @@ def test_sdist_contains_only_sources(dist: Path) -> None:
     # The generator ships in the sdist, with its tests and reviewed overrides, but never in the
     # wheel.
     assert {"codegen/__main__.py", "codegen/ir.py", "codegen/overrides.toml"} <= names
-    assert "tests/codegen/fixtures/widgets.json" in names
+    assert {"codegen/abi/clang.py", "codegen/abi/include/stdint.h"} <= names
+    assert {"tests/codegen/fixtures/widgets.json", "tests/codegen/fixtures/layouts.h"} <= names
 
 
 def test_distributions_contain_no_sdk_files(dist: Path) -> None:

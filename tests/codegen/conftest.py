@@ -133,7 +133,7 @@ FLAT_HEADER = """\
 // Invented flat header for tests.
 #ifndef WIDGETFLAT_H
 #define WIDGETFLAT_H
-
+#include "widget_types.h"
 typedef uint64 uint64_owner; // passed instead of WidgetOwner_t
 
 // IWidgets
@@ -149,9 +149,28 @@ S_API bool WidgetAPI_WidgetPos_t_IsSet( WidgetPos_t* self );
 #endif
 """
 
+# What the headers above leave to Valve's other headers, so that they compile for layouts.
+WIDGET_TYPES = """\
+#ifndef WIDGET_TYPES_H
+#define WIDGET_TYPES_H
+#define S_API extern "C"
+#define S_CALLTYPE
+typedef unsigned int uint32;
+typedef unsigned long long uint64;
+typedef uint64 CallID_t;
+enum EWidgetResult { k_EWidgetOK = 1, k_EWidgetFail = -2 };
+struct WidgetOwner_t { uint64 m_unValue; };
+struct WidgetPos_t { float m_rgflCoords[3]; bool IsSet(); private: int m_nSecret; };
+struct WidgetReady_t { EWidgetResult m_eResult; uint32 m_nCount; };
+typedef void ( *WidgetHook_t )( WidgetReady_t * );
+class IWidgets { public: enum EShape { eShape_Round = 0 }; };
+#endif
+"""
+
 HEADERS = {
     "iwidgets.h": '#define WIDGETS_INTERFACE_VERSION "Widgets007"\n',
     "widget_api.h": "S_API bool S_CALLTYPE WidgetAPI_Init();\nS_API void WidgetAPI_Shutdown();\n",
+    "widget_types.h": WIDGET_TYPES,
 }
 
 README = "Widget SDK\n\nv9.99 1st January 2000\nNotes\n"
@@ -165,6 +184,11 @@ def api() -> dict[str, Any]:
 @pytest.fixture
 def flat_header() -> str:
     return FLAT_HEADER
+
+
+@pytest.fixture
+def headers() -> dict[str, str]:
+    return dict(HEADERS)
 
 
 @pytest.fixture

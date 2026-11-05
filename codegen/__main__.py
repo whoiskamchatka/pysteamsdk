@@ -5,16 +5,19 @@
     python -m codegen check FILE
 
 SDK is the folder that contains public/steam. inventory and extract apply the reviewed
-corrections in codegen/overrides.toml unless told otherwise. Exit status: 0 when no issue is an
-error, 1 when some are, 2 when the input cannot be read.
+corrections in codegen/overrides.toml and compute layouts for every target with libclang unless
+told otherwise. Exit status: 0 when no issue is an error, 1 when some are, 2 when the input
+cannot be read.
 """
 
 import argparse
 import sys
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
 from codegen import ir
+from codegen.abi import TARGETS
 from codegen.extract import MetadataError, Overrides, extract, overrides
 from codegen.inventory import plural, render
 from codegen.validate import validate
@@ -42,6 +45,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         choice.add_argument(
             "--no-overrides", dest="overrides", action="store_const", const=None, help="apply none"
         )
+        layouts = command.add_mutually_exclusive_group()
+        layouts.add_argument(
+            "--targets",
+            type=_targets,
+            default=tuple(TARGETS),
+            metavar="LIST",
+            help=f"comma-separated targets to lay out (default: {','.join(TARGETS)})",
+        )
+        layouts.add_argument(
+            "--no-layouts",
+            dest="targets",
+            action="store_const",
+            const=(),
+            help="compute no layouts, so libclang is not needed",
+        )
     write.add_argument(
         "-o", "--output", type=Path, required=True, help="file to write, outside this repository"
     )
@@ -57,7 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Refusing to write {args.output} inside the repository.", file=sys.stderr)
         return 2
     try:
-        extraction = extract(args.sdk, _read_overrides(args.overrides))
+        extraction = extract(args.sdk, _read_overrides(args.overrides), args.targets)
     except MetadataError as exc:
         print(exc, file=sys.stderr)
         return 2
@@ -67,6 +85,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.output.write_text(ir.dumps(extraction.metadata), encoding="utf-8", newline="\n")
         print(f"Wrote {args.output}")
     return 1 if any(issue.severity == "error" for issue in extraction.metadata.issues) else 0
+
+
+def _targets(text: str) -> tuple[str, ...]:
+    names = tuple(dict.fromkeys(name.strip() for name in text.split(",")))
+    unknown = [name for name in names if name not in TARGETS]
+    if unknown or not names:
+        known = ", ".join(TARGETS)
+        raise argparse.ArgumentTypeError(f"unknown target {', '.join(unknown)!r}; use {known}")
+    return names
 
 
 def _read_overrides(path: Path | None) -> Overrides | None:
@@ -88,9 +115,9 @@ def _check(path: Path) -> int:
     issues = ir.sort_issues(validate(metadata))
     for issue in issues:
         print(f"{issue.severity}: {issue.code}: {issue.message}  [{issue.source}]")
-    errors = sum(issue.severity == "error" for issue in issues)
-    print(f"{path}: {plural(errors, 'error')}, {plural(len(issues) - errors, 'warning')}")
-    return 1 if errors else 0
+    counts = Counter(issue.severity for issue in issues)
+    print(f"{path}: " + ", ".join(plural(counts[severity], severity) for severity in ir.SEVERITIES))
+    return 1 if counts["error"] else 0
 
 
 if __name__ == "__main__":

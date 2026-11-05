@@ -47,9 +47,9 @@ def test_integer_and_float_values_stay_distinct(widgets: ir.Metadata) -> None:
 @pytest.mark.parametrize(
     ("version", "message"),
     [
-        (1, "format 1 is not supported; extract the SDK again for 2"),
-        (3, "format 3 is not supported"),
-        ("2", "format '2' is not supported"),
+        (2, "format 2 is not supported; extract the SDK again for 3"),
+        (4, "format 4 is not supported"),
+        ("3", "format '3' is not supported"),
         (True, "format True is not supported"),
         (None, "format None is not supported"),
     ],
@@ -63,19 +63,25 @@ def test_other_format_versions_are_rejected(
         ir.loads(json.dumps(data))
 
 
+# Metadata of the current format with an unknown field "x", whose value comes next.
+FIELD_X = f'{{"format": {ir.FORMAT}, "x": '
+
+
+# Cases with huge texts get short ids: pytest puts each test's id in an environment variable,
+# and Windows refuses variables longer than 32767 characters.
 @pytest.mark.parametrize(
     ("text", "message"),
     [
         ("", "not valid JSON"),
         ("{", "not valid JSON"),
         ("]" * 100 + "[" * 100, "not valid JSON"),
-        ('{"format": 2, "x": "' + "[" * 100_000, "not valid JSON"),
+        pytest.param(FIELD_X + '"' + "[" * 100_000, "not valid JSON", id="unterminated"),
         # Unterminated, and full of escaped quotes: the depth scan must stay linear.
-        ('"' + '\\"[' * 100_000, "not valid JSON"),
+        pytest.param('"' + '\\"[' * 100_000, "not valid JSON", id="escaped-quotes"),
         ("[]", "no format"),
         ('{"interfaces": []}', "no format"),
-        ('{"format": 2, "format": 2}', "duplicate key 'format'"),
-        ('{"format": 2, "x": NaN}', "NaN is not a JSON number"),
+        ('{"format": 3, "format": 3}', "duplicate key 'format'"),
+        (FIELD_X + "NaN}", "NaN is not a JSON number"),
     ],
 )
 def test_malformed_text_is_rejected(text: str, message: str) -> None:
@@ -86,10 +92,12 @@ def test_malformed_text_is_rejected(text: str, message: str) -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        '{"format": 2, "x": ' + "[" * ir.MAX_DEPTH + "]" * ir.MAX_DEPTH + "}",
-        '{"format": 2, "x": ' + '{"x": ' * ir.MAX_DEPTH + "1" + "}" * ir.MAX_DEPTH + "}",
-        "[" * 100_000 + "]" * 100_000,
-        "[" * 100_000,
+        pytest.param(FIELD_X + "[" * ir.MAX_DEPTH + "]" * ir.MAX_DEPTH + "}", id="arrays"),
+        pytest.param(
+            FIELD_X + '{"x": ' * ir.MAX_DEPTH + "1" + "}" * ir.MAX_DEPTH + "}", id="objects"
+        ),
+        pytest.param("[" * 100_000 + "]" * 100_000, id="hostile"),
+        pytest.param("[" * 100_000, id="hostile-unclosed"),
     ],
 )
 def test_deep_nesting_is_refused_before_parsing(text: str) -> None:
@@ -103,14 +111,14 @@ def test_deep_nesting_is_refused_before_parsing(text: str) -> None:
 @pytest.mark.parametrize(
     "value",
     [
-        "[" * (ir.MAX_DEPTH - 1) + "]" * (ir.MAX_DEPTH - 1),
-        '"' + "[{" * 100_000 + '"',
-        '"\\"' + "[" * 100_000 + '"',
+        pytest.param("[" * (ir.MAX_DEPTH - 1) + "]" * (ir.MAX_DEPTH - 1), id="at-the-limit"),
+        pytest.param('"' + "[{" * 100_000 + '"', id="brackets-in-a-string"),
+        pytest.param('"\\"' + "[" * 100_000 + '"', id="after-an-escaped-quote"),
     ],
 )
 def test_nesting_within_the_limit_reaches_the_field_checks(value: str) -> None:
     with pytest.raises(ir.ReadError) as raised:
-        ir.loads('{"format": 2, "x": ' + value + "}")
+        ir.loads(FIELD_X + value + "}")
     assert raised.value.problems[0] == "/x: unknown field"
 
 
@@ -158,6 +166,33 @@ def mutate(data: dict[str, Any], path: tuple[str | int, ...], value: object) -> 
         (("enums", 0), [], "/enums/0: expected an object, found a list"),
         (("interfaces", 0, "methods", 1, "params", 1, "annotations", "x"), 1, "found an integer"),
         (("sdk_version",), 9.99, "/sdk_version: expected a string, found a number"),
+        (("abi",), [], "/abi: expected an object, found a list"),
+        (
+            ("abi", "targets", 0, "triple"),
+            DELETE,
+            "/abi/targets/0: missing required field 'triple'",
+        ),
+        (
+            ("abi", "targets", 0, "records", 0, "status"),
+            "partial",
+            "one of 'complete', 'opaque', 'unsupported'",
+        ),
+        (
+            ("abi", "targets", 0, "records", 0, "fields", 0, "offset"),
+            "0",
+            "/abi/targets/0/records/0/fields/0/offset: expected an integer, found a string",
+        ),
+        (
+            ("abi", "targets", 0, "records", 0, "fields", 0, "record"),
+            [],
+            "/abi/targets/0/records/0/fields/0/record: expected an object, found a list",
+        ),
+        (("abi", "targets", 1, "enums", 0, "size"), 4.0, "expected an integer, found a number"),
+        (
+            ("abi", "targets", 1, "typedefs", 0, "size"),
+            True,
+            "expected an integer, found a boolean",
+        ),
     ],
 )
 def test_fields_are_checked_with_their_location(
