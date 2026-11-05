@@ -42,11 +42,19 @@ normalized metadata format. It never ships in the wheel and needs no Steam clien
 ```sh
 python -m codegen inventory sdk                     # counts, cross-checks and open issues
 python -m codegen extract sdk -o ../metadata.json   # the normalized metadata as JSON
+python -m codegen check ../metadata.json            # validate metadata written earlier
 ```
 
 The extracted metadata is derived from Valve's SDK, so it stays out of the repository until a
 redistribution review allows otherwise; `extract` refuses to write inside it. The tests in
 `tests/codegen` use small invented fixtures.
+
+`codegen/overrides.toml` records reviewed corrections where the SDK's metadata is incomplete,
+such as a missing interface version or types `steam_api.json` uses without describing. Each
+entry needs SDK evidence and a reason, and is checked against the SDK on every run: when a new
+SDK release no longer matches an entry, extraction reports an error until the entry is reviewed
+again. Struct layouts never go in this file. Pass `--no-overrides` to see the SDK's metadata
+as Valve ships it.
 
 ## Steamworks SDK
 

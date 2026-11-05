@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 
 from codegen import ir
-from codegen.extract.cdecl import TypeSyntaxError, parse_param, parse_type, split_params
+from codegen.cdecl import TypeSyntaxError, parse_param, parse_type, split_params
 
 FLAT_HEADER = "steam_api_flat.h"
 

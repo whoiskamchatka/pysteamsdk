@@ -1,48 +1,10 @@
-"""Cross-check steam_api.json against the headers and find type names nothing defines."""
+"""Cross-check steam_api.json against the headers."""
 
-from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 from codegen import ir
 from codegen.extract.headers import FlatFunction, FlatHeader, HeaderScan
-
-# C and C++ fundamental types, spelled as cdecl joins them.
-FUNDAMENTAL = frozenset(
-    {
-        "void",
-        "bool",
-        "char",
-        "signed char",
-        "unsigned char",
-        "short",
-        "unsigned short",
-        "int",
-        "unsigned int",
-        "long",
-        "unsigned long",
-        "long long",
-        "unsigned long long",
-        "float",
-        "double",
-    }
-)
-# Typedefs from the C standard headers the SDK includes; several have platform-defined widths.
-STANDARD = frozenset(
-    {
-        "size_t",
-        "intptr_t",
-        "uintptr_t",
-        "int8_t",
-        "uint8_t",
-        "int16_t",
-        "uint16_t",
-        "int32_t",
-        "uint32_t",
-        "int64_t",
-        "uint64_t",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -117,53 +79,19 @@ def _compare(expected: FlatSignature, declared: FlatFunction) -> list[ir.Issue]:
 
 
 def check_versions(metadata: ir.Metadata, scan: HeaderScan) -> list[ir.Issue]:
-    """Match interface version strings in steam_api.json with the headers' version macros."""
+    """Match interface versions, including those from overrides, with header version macros."""
     issues: list[ir.Issue] = []
     in_headers = {macro.version for macro in scan.versions}
-    in_json = {i.version for i in metadata.interfaces if i.version is not None}
+    known = {i.version for i in metadata.interfaces if i.version is not None}
     for interface in metadata.interfaces:
-        if interface.version is not None and interface.version not in in_headers:
+        if interface.version is None:
+            message = f"{interface.name} has no version string"
+            issues.append(ir.Issue("note", "interface-without-version", message, interface.source))
+        elif interface.version not in in_headers:
             message = f"{interface.name} version {interface.version} has no header macro"
             issues.append(ir.Issue("warning", "version-not-in-headers", message, interface.source))
     for macro in scan.versions:
-        if macro.version not in in_json:
+        if macro.version not in known:
             message = f"{macro.macro} = {macro.version!r} is not in steam_api.json"
             issues.append(ir.Issue("note", "version-only-in-headers", message, macro.source))
-    return issues
-
-
-def type_uses(metadata: ir.Metadata) -> Iterator[tuple[ir.CType, str]]:
-    for function in metadata.functions():
-        yield function.returns, function.source
-        if function.flat_returns:
-            yield function.flat_returns, function.source
-        for param in function.params:
-            yield param.type, function.source
-            if param.flat_type:
-                yield param.flat_type, function.source
-    for struct in metadata.structs:
-        for item in struct.fields:
-            yield item.type, struct.source
-    for constant in metadata.constants:
-        yield constant.type, constant.source
-    for typedef in metadata.typedefs:
-        yield typedef.type, typedef.source
-
-
-def check_unresolved_types(metadata: ir.Metadata) -> list[ir.Issue]:
-    known = set(FUNDAMENTAL | STANDARD)
-    known.update(item.name for item in metadata.interfaces)
-    known.update(item.name for item in metadata.structs)
-    known.update(item.qualified_name for item in metadata.enums)
-    known.update(item.name for item in metadata.typedefs)
-    unresolved: dict[str, list[str]] = defaultdict(list)
-    for ctype, source in type_uses(metadata):
-        for name in ctype.referenced_names():
-            if name not in known:
-                unresolved[name].append(source)
-    issues = []
-    for name, sources in sorted(unresolved.items()):
-        uses = f"{len(sources)} time{'s' if len(sources) != 1 else ''}"
-        message = f"{name} is used {uses} but defined nowhere in the metadata"
-        issues.append(ir.Issue("warning", "unresolved-type", message, sources[0]))
     return issues

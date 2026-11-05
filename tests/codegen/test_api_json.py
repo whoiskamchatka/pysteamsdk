@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from codegen.extract.api_json import MetadataError, integer_literal, load
+from codegen.extract.api_json import MetadataError, load
 from codegen.ir import Issue
 
 
@@ -46,15 +46,12 @@ def test_valid_metadata_is_normalized(api: dict[str, Any]) -> None:
         ("k_EWidgetFail", -2),
     ]
     constants = {constant.name: constant for constant in found.constants}
-    assert constants["k_unWidgetMask"].value == 255
-    assert constants["k_nWidgetCombo"].value is None
     assert constants["k_nWidgetCombo"].expression == "k_nWidgetMax | 1"
+    # Values need every constant and typedef, so extract evaluates them afterwards.
+    assert {constant.value for constant in found.constants} == {None}
     typedefs = {typedef.name: typedef for typedef in found.typedefs}
     assert typedefs["WidgetHook_t"].type.kind == "function_pointer"
-    assert codes(found.issues) == {
-        ("note", "documentation-omitted"): 1,
-        ("note", "unevaluated-constant"): 1,
-    }
+    assert codes(found.issues) == {("note", "documentation-omitted"): 1}
 
 
 def test_valve_prose_never_reaches_the_ir(api: dict[str, Any]) -> None:
@@ -120,39 +117,6 @@ def test_duplicate_json_keys_are_rejected() -> None:
         load('{"typedefs": [], "typedefs": []}')
 
 
-def test_duplicate_declarations_are_errors(api: dict[str, Any]) -> None:
-    api["structs"].append({"struct": "WidgetPos_t", "fields": []})
-    api["typedefs"].append({"typedef": "IWidgets", "type": "int"})
-    api["consts"].append(dict(api["consts"][0]))
-    api["interfaces"].append(
-        {
-            "classname": "IGadgets",
-            "version_string": "Widgets007",
-            "accessors": [{"kind": "user", "name": "W", "name_flat": "WidgetAPI_Widgets_v007"}],
-            "methods": [],
-        }
-    )
-    found = codes(load(json.dumps(api)).issues)
-    # The struct, the typedef that reuses an interface name, and the constant.
-    assert found[("error", "duplicate-declaration")] == 3
-    assert found[("error", "duplicate-flat-function")] == 1
-    assert found[("error", "duplicate-version")] == 1
-
-
-def test_a_shared_callback_id_is_a_warning(api: dict[str, Any]) -> None:
-    api["callback_structs"].append({"callback_id": 701, "struct": "WidgetGone_t", "fields": []})
-    found = load(json.dumps(api))
-    (shared,) = [i for i in found.issues if i.code == "shared-callback-id"]
-    assert shared.severity == "warning"
-    assert "WidgetGone_t, WidgetReady_t" in shared.message
-
-
-def test_a_call_result_must_name_a_callback_struct(api: dict[str, Any]) -> None:
-    api["interfaces"][0]["methods"][1]["callresult"] = "WidgetPos_t"
-    found = load(json.dumps(api))
-    assert ("error", "unknown-callback-struct") in codes(found.issues)
-
-
 def test_unsupported_type_syntax_is_kept_and_reported(api: dict[str, Any]) -> None:
     api["structs"][1]["fields"][0]["fieldtype"] = "float const [3]"
     found = load(json.dumps(api))
@@ -162,15 +126,13 @@ def test_unsupported_type_syntax_is_kept_and_reported(api: dict[str, Any]) -> No
     assert ("warning", "unsupported-type-syntax") in codes(found.issues)
 
 
-def test_interfaces_without_a_version_are_noted(api: dict[str, Any]) -> None:
+def test_a_missing_version_is_kept_as_none(api: dict[str, Any]) -> None:
     del api["interfaces"][0]["version_string"]
-    found = load(json.dumps(api))
-    assert found.interfaces[0].version is None
-    assert ("note", "interface-without-version") in codes(found.issues)
+    assert load(json.dumps(api)).interfaces[0].version is None
 
 
 @pytest.mark.parametrize(
-    ("text", "value"),
+    ("spelling", "value"),
     [
         ("0", 0),
         ("-2", -2),
@@ -178,11 +140,17 @@ def test_interfaces_without_a_version_are_noted(api: dict[str, Any]) -> None:
         ("0x1F", 31),
         ("0xffffffffffffffffull", 2**64 - 1),
         ("010", 8),
-        ("100 * 2", None),
+        ("1 << 4", 16),
         ("600.f", None),
-        ("'d'", None),
-        ("k_nOther", None),
+        ("k_EOther", None),
     ],
 )
-def test_only_integer_literals_are_evaluated(text: str, value: int | None) -> None:
-    assert integer_literal(text) == value
+def test_enum_values_are_evaluated_when_they_name_nothing(
+    api: dict[str, Any], spelling: str, value: int | None
+) -> None:
+    api["enums"][0]["values"][0]["value"] = spelling
+    found = load(json.dumps(api))
+    (enum, _) = found.enums
+    assert (enum.values[0].spelling, enum.values[0].value) == (spelling, value)
+    unevaluated = ("warning", "unevaluated-enum-value") in codes(found.issues)
+    assert unevaluated == (value is None)
