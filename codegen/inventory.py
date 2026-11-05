@@ -27,9 +27,11 @@ def counts(extraction: Extraction) -> dict[str, int]:
         "nested_enums": sum(item.scope is not None for item in metadata.enums),
         "enum_values": sum(len(item.values) for item in metadata.enums),
         "constants": len(metadata.constants),
-        "constant_expressions": sum(item.value is None for item in metadata.constants),
+        "unevaluated_constants": sum(item.value is None for item in metadata.constants),
         "typedefs_json": json_typedefs,
         "typedefs_flat": len(metadata.typedefs) - json_typedefs,
+        "external_types": len(metadata.external_types),
+        "shared_callbacks": len(metadata.shared_callbacks),
         "other_exports": len(metadata.exports),
         "version_macros": len(extraction.scan.versions),
     }
@@ -102,15 +104,17 @@ def render(extraction: Extraction) -> str:
         _row("callback structs", found["callback_structs"]),
         _row("enums", found["enums"], f"{found['nested_enums']} nested"),
         _row("enum values", found["enum_values"]),
-        _row("constants", found["constants"], f"{found['constant_expressions']} not evaluated"),
+        _row("constants", found["constants"], f"{found['unevaluated_constants']} not evaluated"),
         _row("typedefs", found["typedefs_json"], "in steam_api.json"),
         _row("", found["typedefs_flat"], "in steam_api_flat.h"),
+        _row("external types", found["external_types"], "located by overrides"),
+        _row("shared callback IDs", found["shared_callbacks"], "accepted by overrides"),
         _row("other exports", found["other_exports"], "S_API functions not in steam_api.json"),
         "",
         "Flat API special cases",
         *(_row(name.replace("_", " "), count) for name, count in cases.items()),
         "",
-        "Issues: " + ", ".join(f"{severities[s]} {s}s" for s in ir.SEVERITIES),
+        "Issues: " + ", ".join(plural(severities[s], s) for s in ir.SEVERITIES),
     ]
     notes: Counter[str] = Counter()
     for issue in metadata.issues:
@@ -124,3 +128,7 @@ def render(extraction: Extraction) -> str:
 
 def _row(label: str, count: int, detail: str = "") -> str:
     return f"  {label:28} {count:5}  {detail}".rstrip()
+
+
+def plural(number: int, noun: str) -> str:
+    return f"{number} {noun}{'' if number == 1 else 's'}"

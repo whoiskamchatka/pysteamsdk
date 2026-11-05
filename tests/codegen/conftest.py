@@ -1,7 +1,8 @@
 """A tiny synthetic SDK in the shape of Valve's metadata. Every name and value is invented.
 
 The files are written to a temporary folder by each test, so no file in the repository looks
-like an SDK file.
+like an SDK file. fixtures/widgets.json is separate: invented metadata in pysteamsdk's own
+format, for tests that start from the IR rather than from an SDK.
 """
 
 import copy
@@ -11,6 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from codegen import ir
+
+WIDGETS_IR = Path(__file__).parent / "fixtures" / "widgets.json"
 
 API: dict[str, Any] = {
     "callback_structs": [
@@ -160,6 +165,16 @@ def api() -> dict[str, Any]:
 @pytest.fixture
 def flat_header() -> str:
     return FLAT_HEADER
+
+
+@pytest.fixture
+def widgets_text() -> str:
+    return WIDGETS_IR.read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def widgets(widgets_text: str) -> ir.Metadata:
+    return ir.loads(widgets_text)
 
 
 @pytest.fixture

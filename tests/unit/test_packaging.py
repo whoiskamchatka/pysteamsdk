@@ -109,8 +109,10 @@ def test_sdist_contains_only_sources(dist: Path) -> None:
     allowed = {"PKG-INFO", "pyproject.toml", "README.md", "LICENSE", "CHANGELOG.md"}
     assert {n.split("/")[0] for n in names} <= allowed | {"src", "codegen", "tests", "tools"}
     assert {f"src/pysteamsdk/{name}" for name in PACKAGE_FILES} | {"LICENSE"} <= names
-    # The generator ships in the sdist, with its tests, but never in the wheel.
-    assert {"codegen/__init__.py", "codegen/__main__.py", "codegen/ir.py"} <= names
+    # The generator ships in the sdist, with its tests and reviewed overrides, but never in the
+    # wheel.
+    assert {"codegen/__main__.py", "codegen/ir.py", "codegen/overrides.toml"} <= names
+    assert "tests/codegen/fixtures/widgets.json" in names
 
 
 def test_distributions_contain_no_sdk_files(dist: Path) -> None:
