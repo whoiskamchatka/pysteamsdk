@@ -36,6 +36,23 @@ def test_a_consistent_sdk_extracts_without_errors_or_warnings(make_sdk: MakeSdk)
     ]
 
 
+def test_constants_are_evaluated_with_their_provenance(
+    make_sdk: MakeSdk, api: dict[str, Any]
+) -> None:
+    api["consts"].append({"constname": "k_nWidgetHalf", "consttype": "int", "constval": "1 / 2"})
+    metadata = extract(make_sdk(api)).metadata
+    found = {c.name: (c.value, c.expression, c.source) for c in metadata.constants}
+    assert found == {
+        "k_nWidgetCombo": (17, "k_nWidgetMax | 1", "steam_api.json#/consts/2"),
+        "k_nWidgetHalf": (None, "1 / 2", "steam_api.json#/consts/3"),
+        "k_nWidgetMax": (16, "16", "steam_api.json#/consts/0"),
+        "k_unWidgetMask": (255, "0xFF", "steam_api.json#/consts/1"),
+    }
+    (issue,) = [i for i in metadata.issues if i.severity != "note"]
+    assert (issue.code, issue.source) == ("unevaluated-constant", "steam_api.json#/consts/3")
+    assert issue.message == "k_nWidgetHalf = '1 / 2': '/' is not supported here"
+
+
 @pytest.mark.parametrize(
     ("old", "new", "issue"),
     [

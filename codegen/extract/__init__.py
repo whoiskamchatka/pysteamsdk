@@ -8,10 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from codegen import ir
+from codegen.cexpr import evaluate_constants
 from codegen.extract import api_json, checks, headers
 from codegen.extract.api_json import MetadataError
+from codegen.extract.overrides import Overrides
+from codegen.extract.overrides import apply as apply_overrides
+from codegen.validate import validate
 
-__all__ = ["Extraction", "MetadataError", "extract"]
+__all__ = ["Extraction", "MetadataError", "Overrides", "extract"]
 
 HEADER_FOLDER = Path("public", "steam")
 
@@ -26,11 +30,12 @@ class Extraction:
     files: dict[str, Path]
 
 
-def extract(sdk: str | os.PathLike[str]) -> Extraction:
+def extract(sdk: str | os.PathLike[str], overrides: Overrides | None = None) -> Extraction:
     """Read the SDK whose root folder, the one containing public/steam, is ``sdk``.
 
     Raises MetadataError when steam_api.json or steam_api_flat.h is missing or unreadable.
-    Anything else that looks wrong is reported in the metadata's issues instead.
+    Anything else that looks wrong is reported in the metadata's issues instead, including
+    overrides whose targets no longer match.
     """
     root = Path(sdk)
     folder = root / HEADER_FOLDER
@@ -60,7 +65,7 @@ def extract(sdk: str | os.PathLike[str]) -> Extraction:
     scan = headers.scan_headers(texts)
 
     flat_names = {function.name for function in flat.functions}
-    partial = ir.Metadata(
+    metadata = ir.Metadata(
         format=ir.FORMAT,
         sdk_version=_readme_version(raw.get(readme, b"")),
         inputs=tuple(
@@ -74,20 +79,26 @@ def extract(sdk: str | os.PathLike[str]) -> Extraction:
         typedefs=tuple(
             sorted((*declarations.typedefs, *flat.typedefs), key=lambda item: item.name)
         ),
+        external_types=(),
+        shared_callbacks=(),
         exports=tuple(export for export in scan.exports if export.name not in flat_names),
         issues=(),
     )
-    issues = [
-        *declarations.issues,
-        *flat.issues,
-        *_flat_typedef_clashes(declarations, flat),
-        *checks.check_flat_header(partial, flat),
-        *checks.check_versions(partial, scan),
-        *checks.check_unresolved_types(partial),
+    issues = [*declarations.issues, *flat.issues]
+    if overrides is not None:
+        metadata, found = apply_overrides(metadata, overrides, texts, scan)
+        issues += found
+    constants, found = evaluate_constants(metadata.constants, metadata.typedefs)
+    metadata = dataclasses.replace(metadata, constants=constants)
+    issues += [
+        *found,
+        *checks.check_flat_header(metadata, flat),
+        *checks.check_versions(metadata, scan),
+        *validate(metadata),
     ]
-    if partial.sdk_version is None:
+    if metadata.sdk_version is None:
         issues.append(ir.Issue("note", "sdk-version-unknown", "no version in Readme.txt", "SDK"))
-    metadata = dataclasses.replace(partial, issues=tuple(sorted(issues, key=_issue_order)))
+    metadata = dataclasses.replace(metadata, issues=ir.sort_issues(issues))
     files = {"sdk": root, "json": json_path, "flat": flat_path}
     return Extraction(metadata, flat, scan, files)
 
@@ -96,24 +107,3 @@ def _readme_version(readme: bytes) -> str | None:
     # The newest release heads the release notes as a line such as "v1.65 23th July 2026".
     match = re.search(rb"^v(\d+\.\d+)\b", readme, re.MULTILINE)
     return match.group(1).decode() if match else None
-
-
-def _flat_typedef_clashes(
-    declarations: api_json.Declarations, flat: headers.FlatHeader
-) -> list[ir.Issue]:
-    """steam_api.json duplicates are reported by api_json; this adds the flat header's."""
-    taken = {item.name for item in declarations.interfaces}
-    taken |= {item.name for item in declarations.structs}
-    taken |= {item.qualified_name for item in declarations.enums}
-    taken |= {item.name for item in declarations.typedefs}
-    issues = []
-    for typedef in flat.typedefs:
-        if typedef.name in taken:
-            message = f"typedef {typedef.name} is declared again"
-            issues.append(ir.Issue("error", "duplicate-declaration", message, typedef.source))
-        taken.add(typedef.name)
-    return issues
-
-
-def _issue_order(issue: ir.Issue) -> tuple[int, str, str, str]:
-    return (ir.SEVERITIES.index(issue.severity), issue.code, issue.source, issue.message)

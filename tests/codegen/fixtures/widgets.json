@@ -1,0 +1,312 @@
+{
+ "format": 2,
+ "sdk_version": "9.99",
+ "inputs": [
+  {
+   "path": "public/steam/steam_api.json",
+   "sha256": "2f78d3699f34a5b80b0632862ad5d3453d23ed5a9f0303cfe69a95ff96700415"
+  },
+  {
+   "path": "public/steam/steam_api_flat.h",
+   "sha256": "9941fc1a58cbfa46fa83ebfd016770bdec8dc45344528853bd43e0141d780774"
+  }
+ ],
+ "interfaces": [
+  {
+   "name": "IWidgets",
+   "methods": [
+    {
+     "name": "GetWidgetCount",
+     "flat_name": "WidgetAPI_IWidgets_GetWidgetCount",
+     "returns": {
+      "spelling": "int",
+      "base": "int"
+     },
+     "params": [],
+     "source": "steam_api.json#/interfaces/0/methods/0"
+    },
+    {
+     "name": "GetWidgetName",
+     "flat_name": "WidgetAPI_IWidgets_GetWidgetName",
+     "returns": {
+      "spelling": "bool",
+      "base": "bool"
+     },
+     "params": [
+      {
+       "name": "iWidget",
+       "type": {
+        "spelling": "int",
+        "base": "int"
+       }
+      },
+      {
+       "name": "pchName",
+       "type": {
+        "spelling": "char *",
+        "base": "char",
+        "pointers": 1
+       },
+       "annotations": {
+        "out_string_count": "cchName"
+       }
+      },
+      {
+       "name": "cchName",
+       "type": {
+        "spelling": "int",
+        "base": "int"
+       }
+      }
+     ],
+     "source": "steam_api.json#/interfaces/0/methods/1"
+    },
+    {
+     "name": "SetWidgetName",
+     "flat_name": "WidgetAPI_IWidgets_SetWidgetName",
+     "returns": {
+      "spelling": "bool",
+      "base": "bool"
+     },
+     "params": [
+      {
+       "name": "iWidget",
+       "type": {
+        "spelling": "int",
+        "base": "int"
+       }
+      },
+      {
+       "name": "pchName",
+       "type": {
+        "spelling": "const char *",
+        "base": "char",
+        "const": true,
+        "pointers": 1
+       }
+      }
+     ],
+     "source": "steam_api.json#/interfaces/0/methods/2"
+    },
+    {
+     "name": "GetWidgetPos",
+     "flat_name": "WidgetAPI_IWidgets_GetWidgetPos",
+     "returns": {
+      "spelling": "bool",
+      "base": "bool"
+     },
+     "params": [
+      {
+       "name": "iWidget",
+       "type": {
+        "spelling": "int",
+        "base": "int"
+       }
+      },
+      {
+       "name": "pPos",
+       "type": {
+        "spelling": "WidgetPos_t *",
+        "base": "WidgetPos_t",
+        "pointers": 1
+       },
+       "annotations": {
+        "out_struct": ""
+       }
+      }
+     ],
+     "source": "steam_api.json#/interfaces/0/methods/3"
+    },
+    {
+     "name": "RequestWidget",
+     "flat_name": "WidgetAPI_IWidgets_RequestWidget",
+     "returns": {
+      "spelling": "CallID_t",
+      "base": "CallID_t"
+     },
+     "params": [
+      {
+       "name": "unWidgetID",
+       "type": {
+        "spelling": "uint32",
+        "base": "uint32"
+       }
+      }
+     ],
+     "source": "steam_api.json#/interfaces/0/methods/4",
+     "callresult": "WidgetReady_t"
+    }
+   ],
+   "source": "steam_api.json#/interfaces/0",
+   "version": "Widgets007",
+   "accessors": [
+    {
+     "kind": "user",
+     "name": "Widgets",
+     "flat_name": "WidgetAPI_Widgets_v007",
+     "source": "steam_api.json#/interfaces/0/accessors/0"
+    }
+   ]
+  }
+ ],
+ "structs": [
+  {
+   "name": "WidgetPos_t",
+   "fields": [
+    {
+     "name": "m_flX",
+     "type": {
+      "spelling": "float",
+      "base": "float"
+     }
+    },
+    {
+     "name": "m_flY",
+     "type": {
+      "spelling": "float",
+      "base": "float"
+     }
+    },
+    {
+     "name": "m_rgubColor",
+     "type": {
+      "spelling": "uint8 [4]",
+      "base": "uint8",
+      "array": 4
+     }
+    }
+   ],
+   "source": "steam_api.json#/structs/0"
+  },
+  {
+   "name": "WidgetReady_t",
+   "fields": [
+    {
+     "name": "m_eResult",
+     "type": {
+      "spelling": "EWidgetResult",
+      "base": "EWidgetResult"
+     }
+    },
+    {
+     "name": "m_unWidgetID",
+     "type": {
+      "spelling": "uint32",
+      "base": "uint32"
+     }
+    }
+   ],
+   "source": "steam_api.json#/callback_structs/0",
+   "callback_id": 701
+  }
+ ],
+ "enums": [
+  {
+   "name": "EWidgetResult",
+   "qualified_name": "EWidgetResult",
+   "values": [
+    {
+     "name": "k_EWidgetResultOK",
+     "spelling": "1",
+     "value": 1
+    },
+    {
+     "name": "k_EWidgetResultBusy",
+     "spelling": "2",
+     "value": 2
+    },
+    {
+     "name": "k_EWidgetResultFail",
+     "spelling": "-1",
+     "value": -1
+    }
+   ],
+   "source": "steam_api.json#/enums/0"
+  }
+ ],
+ "constants": [
+  {
+   "name": "k_cbWidgetBufferSize",
+   "type": {
+    "spelling": "uint32",
+    "base": "uint32"
+   },
+   "expression": "( uint32 ) k_cchWidgetNameMax << 2",
+   "source": "steam_api.json#/consts/2",
+   "value": 256
+  },
+  {
+   "name": "k_cchWidgetNameMax",
+   "type": {
+    "spelling": "int",
+    "base": "int"
+   },
+   "expression": "64",
+   "source": "steam_api.json#/consts/0",
+   "value": 64
+  },
+  {
+   "name": "k_flWidgetScale",
+   "type": {
+    "spelling": "float",
+    "base": "float"
+   },
+   "expression": "0.5f",
+   "source": "steam_api.json#/consts/3",
+   "value": 0.5
+  },
+  {
+   "name": "k_unWidgetIDInvalid",
+   "type": {
+    "spelling": "uint32",
+    "base": "uint32"
+   },
+   "expression": "0xFFFFFFFF",
+   "source": "steam_api.json#/consts/1",
+   "value": 4294967295
+  }
+ ],
+ "typedefs": [
+  {
+   "name": "CallID_t",
+   "type": {
+    "spelling": "uint64",
+    "base": "uint64"
+   },
+   "source": "steam_api.json#/typedefs/3"
+  },
+  {
+   "name": "uint32",
+   "type": {
+    "spelling": "unsigned int",
+    "base": "unsigned int"
+   },
+   "source": "steam_api.json#/typedefs/1"
+  },
+  {
+   "name": "uint64",
+   "type": {
+    "spelling": "unsigned long long",
+    "base": "unsigned long long"
+   },
+   "source": "steam_api.json#/typedefs/2"
+  },
+  {
+   "name": "uint8",
+   "type": {
+    "spelling": "unsigned char",
+    "base": "unsigned char"
+   },
+   "source": "steam_api.json#/typedefs/0"
+  }
+ ],
+ "external_types": [],
+ "shared_callbacks": [],
+ "exports": [
+  {
+   "name": "WidgetAPI_Init",
+   "source": "widget_api.h:3"
+  }
+ ],
+ "issues": []
+}

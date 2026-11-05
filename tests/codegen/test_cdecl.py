@@ -1,6 +1,6 @@
 import pytest
 
-from codegen.extract.cdecl import TypeSyntaxError, parse_param, parse_type, split_params
+from codegen.cdecl import TypeSyntaxError, parse_param, parse_type, split_params
 from codegen.ir import CType
 
 

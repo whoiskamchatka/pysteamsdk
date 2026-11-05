@@ -1,0 +1,95 @@
+# Reviewed corrections to the Steamworks SDK metadata, applied by `python -m codegen`.
+#
+# Each entry names its target and says why it exists. The extractor checks every entry against
+# the SDK and reports it as an error, without applying it, once its target no longer looks as
+# described. Add an entry only with evidence from the SDK itself, and never to describe a struct
+# layout: layouts come from compiling the headers.
+
+[[interface_version]]
+interface = "ISteamClient"
+macro = "STEAMCLIENT_INTERFACE_VERSION"
+version = "SteamClient023"
+reason = """
+steam_api.json gives ISteamClient no version_string and the flat API no accessor. isteamclient.h
+defines this macro right after the class, and its SteamClient() accessor passes the macro to
+the exported SteamInternal_CreateInterface, which is how a flat C caller reaches ISteamClient.
+"""
+
+[[shared_callback]]
+callback_id = 1108
+structs = ["GSStatsUnloaded_t", "UserStatsUnloaded_t"]
+reason = """
+isteamgameserverstats.h and isteamuserstats.h both declare this callback as
+k_iSteamUserStatsCallbacks + 8 with one identical CSteamID member: the same notification,
+named once for game servers and once for clients. The ID stays shared and either struct reads
+the payload.
+"""
+
+[[external_type]]
+name = "CSteamID"
+declaration = "class"
+header = "steamclientpublic.h"
+reason = """
+A C++ class steam_api.json does not describe. Flat functions take and return it as
+uint64_steamid, but callback structs hold the class itself.
+"""
+
+[[external_type]]
+name = "CGameID"
+declaration = "class"
+header = "steamclientpublic.h"
+reason = """
+A C++ class steam_api.json does not describe. Flat functions take and return it as
+uint64_gameid, but structs hold the class itself.
+"""
+
+[[external_type]]
+name = "SteamAPIWarningMessageHook_t"
+declaration = "typedef"
+header = "steam_api_common.h"
+reason = """
+A function pointer type that two SetWarningMessageHook methods take, missing from
+steam_api.json's typedefs.
+"""
+
+[[external_type]]
+name = "ScePadTriggerEffectParam"
+declaration = "struct"
+header = "isteamdualsense.h"
+reason = """
+The DualSense trigger effect struct, defined outside steam_api.json. ISteamInput only takes a
+pointer to it.
+"""
+
+[[external_type]]
+name = "SteamInputActionEvent_t::AnalogAction_t"
+declaration = "struct"
+header = "isteaminput.h"
+reason = """
+Nested in SteamInputActionEvent_t, inside an anonymous union that steam_api.json reduces to its
+analogAction member. The union's real layout must come from the header.
+"""
+
+[[external_type]]
+name = "SteamDatagramRelayAuthTicket"
+declaration = "incomplete"
+header = "steamnetworkingtypes.h"
+reason = """
+Only forward-declared: no SDK header defines it. ISteamNetworkingSockets takes it by pointer.
+"""
+
+[[external_type]]
+name = "ISteamNetworkingConnectionSignaling"
+declaration = "incomplete"
+header = "isteamnetworkingsockets.h"
+reason = """
+Only forward-declared: no SDK header defines it. ConnectP2PCustomSignaling takes it by pointer.
+"""
+
+[[external_type]]
+name = "ISteamNetworkingSignalingRecvContext"
+declaration = "incomplete"
+header = "isteamnetworkingsockets.h"
+reason = """
+Only forward-declared: no SDK header defines it. ReceivedP2PCustomSignal takes it by pointer.
+"""
