@@ -49,6 +49,14 @@ The extracted metadata is derived from Valve's SDK, so it stays out of the repos
 redistribution review allows otherwise; `extract` refuses to write inside it. The tests in
 `tests/codegen` use small invented fixtures.
 
+`extract` and `inventory` also record each struct, union, enum and typedef as Windows x64, Linux
+x86_64 and macOS x86_64 and arm64 lay it out, by compiling the SDK headers with libclang from the
+`codegen` dependency group, which `dev` includes. The only system headers they see are the few in
+`codegen/abi/include`, built from the compiler's own definitions for each target, so every host
+computes the same layouts. Pick targets with `--targets windows-x86_64,linux-x86_64`, or pass
+`--no-layouts` to skip libclang. A record the layouts cannot describe is marked opaque or
+unsupported instead of guessed, and a header that does not compile is an error.
+
 `codegen/overrides.toml` records reviewed corrections where the SDK's metadata is incomplete,
 such as a missing interface version or types `steam_api.json` uses without describing. Each
 entry needs SDK evidence and a reason, and is checked against the SDK on every run: when a new

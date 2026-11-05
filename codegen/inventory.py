@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import Counter, defaultdict
 
 from codegen import ir
 from codegen.extract import Extraction
@@ -35,6 +35,43 @@ def counts(extraction: Extraction) -> dict[str, int]:
         "other_exports": len(metadata.exports),
         "version_macros": len(extraction.scan.versions),
     }
+
+
+def layout_counts(metadata: ir.Metadata) -> dict[str, int]:
+    """Per-target layout counts, and how many layouts differ between targets in size or place."""
+    if metadata.abi is None:
+        return {}
+    found = {}
+    shapes: dict[str, set[object]] = defaultdict(set)
+    storage: dict[str, set[tuple[str, int]]] = defaultdict(set)
+    for target in metadata.abi.targets:
+        statuses = Counter(item.status for item in target.records)
+        found[f"{target.target}_records"] = len(target.records)
+        for status in ("complete", "opaque", "unsupported"):
+            found[f"{target.target}_{status}"] = statuses[status]
+        found[f"{target.target}_enums"] = len(target.enums)
+        found[f"{target.target}_typedefs"] = len(target.typedefs)
+        for record in target.records:
+            shapes[record.name].add(_shape(record))
+        for enum in target.enums:
+            storage[enum.name].add((enum.underlying, enum.size))
+    found["records_differing"] = sum(len(shape) > 1 for shape in shapes.values())
+    found["enums_differing"] = sum(len(kinds) > 1 for kinds in storage.values())
+    return found
+
+
+def _shape(record: ir.RecordLayout) -> object:
+    # Sizes and places only: "long" and "long long" members of the same size lay out alike.
+    return (
+        record.status,
+        record.size,
+        record.align,
+        tuple(
+            (item.name, item.size, item.offset, item.bit_offset, item.bit_width)
+            + ((_shape(item.record),) if item.record else ())
+            for item in record.fields
+        ),
+    )
 
 
 def flat_api_cases(metadata: ir.Metadata) -> dict[str, int]:
@@ -114,6 +151,8 @@ def render(extraction: Extraction) -> str:
         "Flat API special cases",
         *(_row(name.replace("_", " "), count) for name, count in cases.items()),
         "",
+        *_layout_rows(metadata),
+        "",
         "Issues: " + ", ".join(plural(severities[s], s) for s in ir.SEVERITIES),
     ]
     notes: Counter[str] = Counter()
@@ -124,6 +163,30 @@ def render(extraction: Extraction) -> str:
             lines.append(f"  {issue.severity}: {issue.code}: {issue.message}  [{issue.source}]")
     lines += [f"  notes: {code} x{count}" for code, count in sorted(notes.items())]
     return "\n".join(lines) + "\n"
+
+
+def _layout_rows(metadata: ir.Metadata) -> list[str]:
+    if metadata.abi is None:
+        return ["Layouts not computed"]
+    found = layout_counts(metadata)
+    rows = [f"Layouts from libclang {metadata.abi.clang}"]
+    for target in metadata.abi.targets:
+        name = target.target
+        detail = ", ".join(
+            f"{found[f'{name}_{status}']} {status}"
+            for status in ("complete", "opaque", "unsupported")
+        )
+        rows += [
+            _row(f"{name} records", found[f"{name}_records"], detail),
+            _row(f"{name} enums", found[f"{name}_enums"]),
+            _row(f"{name} typedefs", found[f"{name}_typedefs"]),
+        ]
+    if len(metadata.abi.targets) > 1:
+        rows += [
+            _row("records laid out differently", found["records_differing"], "between targets"),
+            _row("enums stored differently", found["enums_differing"], "between targets"),
+        ]
+    return rows
 
 
 def _row(label: str, count: int, detail: str = "") -> str:

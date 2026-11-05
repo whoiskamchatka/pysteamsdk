@@ -1,5 +1,5 @@
 {
- "format": 2,
+ "format": 3,
  "sdk_version": "9.99",
  "inputs": [
   {
@@ -308,5 +308,198 @@
    "source": "widget_api.h:3"
   }
  ],
+ "abi": {
+  "clang": "18.1.1",
+  "targets": [
+   {
+    "target": "windows-x86_64",
+    "triple": "x86_64-pc-windows-msvc",
+    "records": [
+     {
+      "name": "WidgetPos_t",
+      "kind": "struct",
+      "status": "complete",
+      "source": "widgets.h:6",
+      "size": 12,
+      "align": 4,
+      "fields": [
+       {
+        "name": "m_flX",
+        "type": "float",
+        "size": 4,
+        "align": 4,
+        "offset": 0
+       },
+       {
+        "name": "m_flY",
+        "type": "float",
+        "size": 4,
+        "align": 4,
+        "offset": 4
+       },
+       {
+        "name": "m_rgubColor",
+        "type": "unsigned char[4]",
+        "size": 4,
+        "align": 1,
+        "offset": 8
+       }
+      ]
+     },
+     {
+      "name": "WidgetReady_t",
+      "kind": "struct",
+      "status": "complete",
+      "source": "widgets.h:7",
+      "size": 8,
+      "align": 4,
+      "fields": [
+       {
+        "name": "m_eResult",
+        "type": "enum EWidgetResult",
+        "size": 4,
+        "align": 4,
+        "offset": 0
+       },
+       {
+        "name": "m_unWidgetID",
+        "type": "unsigned int",
+        "size": 4,
+        "align": 4,
+        "offset": 4
+       }
+      ]
+     }
+    ],
+    "enums": [
+     {
+      "name": "EWidgetResult",
+      "underlying": "int",
+      "size": 4
+     }
+    ],
+    "typedefs": [
+     {
+      "name": "CallID_t",
+      "type": "unsigned long long",
+      "size": 8,
+      "align": 8
+     },
+     {
+      "name": "uint32",
+      "type": "unsigned int",
+      "size": 4,
+      "align": 4
+     },
+     {
+      "name": "uint64",
+      "type": "unsigned long long",
+      "size": 8,
+      "align": 8
+     },
+     {
+      "name": "uint8",
+      "type": "unsigned char",
+      "size": 1,
+      "align": 1
+     }
+    ]
+   },
+   {
+    "target": "linux-x86_64",
+    "triple": "x86_64-pc-linux-gnu",
+    "records": [
+     {
+      "name": "WidgetPos_t",
+      "kind": "struct",
+      "status": "complete",
+      "source": "widgets.h:6",
+      "size": 12,
+      "align": 4,
+      "fields": [
+       {
+        "name": "m_flX",
+        "type": "float",
+        "size": 4,
+        "align": 4,
+        "offset": 0
+       },
+       {
+        "name": "m_flY",
+        "type": "float",
+        "size": 4,
+        "align": 4,
+        "offset": 4
+       },
+       {
+        "name": "m_rgubColor",
+        "type": "unsigned char[4]",
+        "size": 4,
+        "align": 1,
+        "offset": 8
+       }
+      ]
+     },
+     {
+      "name": "WidgetReady_t",
+      "kind": "struct",
+      "status": "complete",
+      "source": "widgets.h:7",
+      "size": 8,
+      "align": 4,
+      "fields": [
+       {
+        "name": "m_eResult",
+        "type": "enum EWidgetResult",
+        "size": 4,
+        "align": 4,
+        "offset": 0
+       },
+       {
+        "name": "m_unWidgetID",
+        "type": "unsigned int",
+        "size": 4,
+        "align": 4,
+        "offset": 4
+       }
+      ]
+     }
+    ],
+    "enums": [
+     {
+      "name": "EWidgetResult",
+      "underlying": "int",
+      "size": 4
+     }
+    ],
+    "typedefs": [
+     {
+      "name": "CallID_t",
+      "type": "unsigned long long",
+      "size": 8,
+      "align": 8
+     },
+     {
+      "name": "uint32",
+      "type": "unsigned int",
+      "size": 4,
+      "align": 4
+     },
+     {
+      "name": "uint64",
+      "type": "unsigned long long",
+      "size": 8,
+      "align": 8
+     },
+     {
+      "name": "uint8",
+      "type": "unsigned char",
+      "size": 1,
+      "align": 1
+     }
+    ]
+   }
+  ]
+ },
  "issues": []
 }
