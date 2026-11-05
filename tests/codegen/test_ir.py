@@ -68,16 +68,50 @@ def test_other_format_versions_are_rejected(
     [
         ("", "not valid JSON"),
         ("{", "not valid JSON"),
+        ("]" * 100 + "[" * 100, "not valid JSON"),
+        ('{"format": 2, "x": "' + "[" * 100_000, "not valid JSON"),
+        # Unterminated, and full of escaped quotes: the depth scan must stay linear.
+        ('"' + '\\"[' * 100_000, "not valid JSON"),
         ("[]", "no format"),
         ('{"interfaces": []}', "no format"),
         ('{"format": 2, "format": 2}', "duplicate key 'format'"),
         ('{"format": 2, "x": NaN}', "NaN is not a JSON number"),
-        ('{"format": 2, "x": ' + "[" * 100_000 + "]" * 100_000 + "}", "not valid JSON"),
     ],
 )
 def test_malformed_text_is_rejected(text: str, message: str) -> None:
     with pytest.raises(ir.ReadError, match=message):
         ir.loads(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"format": 2, "x": ' + "[" * ir.MAX_DEPTH + "]" * ir.MAX_DEPTH + "}",
+        '{"format": 2, "x": ' + '{"x": ' * ir.MAX_DEPTH + "1" + "}" * ir.MAX_DEPTH + "}",
+        "[" * 100_000 + "]" * 100_000,
+        "[" * 100_000,
+    ],
+)
+def test_deep_nesting_is_refused_before_parsing(text: str) -> None:
+    # MAX_DEPTH + 1 levels is far below where any Python's JSON parser gives up, so the outcome
+    # cannot depend on the interpreter or on the stack it runs with.
+    with pytest.raises(ir.ReadError) as raised:
+        ir.loads(text)
+    assert raised.value.problems == (f"nested more than {ir.MAX_DEPTH} levels deep",)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "[" * (ir.MAX_DEPTH - 1) + "]" * (ir.MAX_DEPTH - 1),
+        '"' + "[{" * 100_000 + '"',
+        '"\\"' + "[" * 100_000 + '"',
+    ],
+)
+def test_nesting_within_the_limit_reaches_the_field_checks(value: str) -> None:
+    with pytest.raises(ir.ReadError) as raised:
+        ir.loads('{"format": 2, "x": ' + value + "}")
+    assert raised.value.problems[0] == "/x: unknown field"
 
 
 @pytest.mark.parametrize(

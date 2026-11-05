@@ -11,6 +11,7 @@ import dataclasses
 import functools
 import json
 import math
+import re
 import types
 import typing
 from collections.abc import Iterable
@@ -19,6 +20,8 @@ from typing import Literal
 
 # Bumped whenever the serialized shape or the meaning of a field changes.
 FORMAT = 2
+# Metadata from SDK 1.65 nests 8 levels deep; each nested function pointer adds two.
+MAX_DEPTH = 32
 
 Severity = Literal["error", "warning", "note"]
 SEVERITIES: tuple[Severity, ...] = ("error", "warning", "note")
@@ -286,9 +289,13 @@ def loads(text: str) -> Metadata:
     """Read what dumps wrote, checking that every field is present and of the right type.
 
     Only this FORMAT is read: metadata is cheap to extract again, so older formats are not
-    converted. Raises ReadError. Whether the declarations agree with each other is left to
-    codegen.validate.
+    converted. Text nested more than MAX_DEPTH levels is refused before it is parsed. Raises
+    ReadError. Whether the declarations agree with each other is left to codegen.validate.
     """
+    # json's own limit is not portable: since Python 3.14 it is however much C stack is left.
+    # A fixed limit also bounds the recursion over CType here and in codegen.validate.
+    if _too_deep(text):
+        raise ReadError([f"nested more than {MAX_DEPTH} levels deep"])
     try:
         data = json.loads(
             text,
@@ -296,7 +303,7 @@ def loads(text: str) -> Metadata:
             parse_constant=_not_a_number,
             parse_float=_finite_float,
         )
-    except (ValueError, RecursionError) as exc:
+    except ValueError as exc:
         raise ReadError([f"not valid JSON: {exc}"]) from None
     if type(data) is not dict or "format" not in data:
         raise ReadError(["not pysteamsdk metadata: no format"])
@@ -304,14 +311,31 @@ def loads(text: str) -> Metadata:
         message = f"format {data['format']!r} is not supported; extract the SDK again for {FORMAT}"
         raise ReadError([message])
     reader = _Reader()
-    try:
-        metadata = reader.read(data, Metadata, "")
-    except RecursionError:
-        raise ReadError(["nested too deeply"]) from None
+    metadata = reader.read(data, Metadata, "")
     if reader.problems:
         raise ReadError(reader.problems)
     assert isinstance(metadata, Metadata)
     return metadata
+
+
+# A string, whose brackets do not count, or a bracket. An unterminated string runs to the end of
+# the text, so the scan stays linear however hostile the text is.
+_STRUCTURE = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"?|[\[\]{}]', re.DOTALL)
+
+
+def _too_deep(text: str) -> bool:
+    # Exact for valid JSON. Invalid text is parsed only up to its first error, and up to there
+    # this count matches the parser's nesting, so the parser never goes deeper than counted.
+    depth = 0
+    for match in _STRUCTURE.finditer(text):
+        token = match.group()
+        if token in ("[", "{"):
+            depth += 1
+            if depth > MAX_DEPTH:
+                return True
+        elif token in ("]", "}"):
+            depth -= 1
+    return False
 
 
 def _unique_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
