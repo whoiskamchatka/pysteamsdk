@@ -1,5 +1,5 @@
 {
- "format": 3,
+ "format": 4,
  "sdk_version": "9.99",
  "inputs": [
   {
@@ -302,6 +302,7 @@
  ],
  "external_types": [],
  "shared_callbacks": [],
+ "by_value": [],
  "exports": [
   {
    "name": "WidgetAPI_Init",

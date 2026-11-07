@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 # Bumped whenever the serialized shape or the meaning of a field changes.
-FORMAT = 3
+FORMAT = 4
 # Metadata from SDK 1.65 nests 11 levels deep; each nested function pointer adds two more and
 # each anonymous record inside another three.
 MAX_DEPTH = 32
@@ -200,6 +200,21 @@ class SharedCallback:
 
 
 @dataclass(frozen=True, slots=True)
+class ByValue:
+    """How ctypes may pass a record the flat API takes or returns by value, from an override.
+
+    ``direct`` lists the targets where a ctypes call has been shown to pass the record as the
+    native compiler does, and ``shim`` those where it does not, so a native shim must take it by
+    pointer instead. Every other target is unverified: it gets no direct binding either.
+    """
+
+    record: str
+    direct: tuple[str, ...]
+    shim: tuple[str, ...]
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
 class Export:
     """A function a header exports with S_API that steam_api.json does not describe."""
 
@@ -318,6 +333,7 @@ class Metadata:
     typedefs: tuple[Typedef, ...]
     external_types: tuple[ExternalType, ...]
     shared_callbacks: tuple[SharedCallback, ...]
+    by_value: tuple[ByValue, ...]
     exports: tuple[Export, ...]
     # None when the metadata was extracted without computing layouts.
     abi: Abi | None

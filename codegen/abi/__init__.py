@@ -4,6 +4,7 @@ Layouts come from compiling the SDK headers for each target, never from steam_ap
 leaves out unions, packing and every size. codegen.abi.clang does the compiling and needs the
 libclang package from the "codegen" dependency group; this module and codegen.abi.checks only
 describe the targets and check layouts, so reading metadata never needs libclang.
+codegen.abi.probe checks layouts against a native C++ compiler instead, and needs only that.
 """
 
 from dataclasses import dataclass

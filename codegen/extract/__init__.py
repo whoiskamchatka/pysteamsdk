@@ -16,7 +16,7 @@ from codegen.extract.overrides import Overrides
 from codegen.extract.overrides import apply as apply_overrides
 from codegen.validate import validate
 
-__all__ = ["Extraction", "MetadataError", "Overrides", "extract"]
+__all__ = ["Extraction", "MetadataError", "Overrides", "extract", "layout_source"]
 
 HEADER_FOLDER = Path("public", "steam")
 # Every other header is compiled for layouts. steam_api_internal.h may only be included by
@@ -92,6 +92,7 @@ def extract(
         ),
         external_types=(),
         shared_callbacks=(),
+        by_value=(),
         exports=tuple(export for export in scan.exports if export.name not in flat_names),
         abi=None,
         issues=(),
@@ -104,8 +105,7 @@ def extract(
     metadata = dataclasses.replace(metadata, constants=constants)
     issues += found
     if targets:
-        names = [path.name for path in header_paths if path.name not in NOT_COMPILED]
-        layouts, found = _lay_out(metadata, root, names, targets)
+        layouts, found = _lay_out(metadata, root, targets)
         metadata = dataclasses.replace(metadata, abi=layouts)
         issues += found
     issues += [
@@ -120,8 +120,22 @@ def extract(
     return Extraction(metadata, flat, scan, files)
 
 
+def layout_source(sdk: str | os.PathLike[str]) -> tuple[str, list[Path]]:
+    """C++ text that includes every SDK header compiled for layouts, and the folders to search."""
+    root = Path(sdk)
+    names = [path.name for path in (root / HEADER_FOLDER).glob("*.h")]
+    # steam_api_flat.h includes "steam/steam_api.h", and the headers include each other by name.
+    # It goes first because it includes the headers in the order they need each other.
+    ordered = sorted(
+        (name for name in names if name not in NOT_COMPILED),
+        key=lambda name: (name != headers.FLAT_HEADER, name),
+    )
+    source = "".join(f'#include "{name}"\n' for name in ordered)
+    return source, [root / "public", root / HEADER_FOLDER]
+
+
 def _lay_out(
-    metadata: ir.Metadata, root: Path, names: Sequence[str], targets: Sequence[str]
+    metadata: ir.Metadata, root: Path, targets: Sequence[str]
 ) -> tuple[ir.Abi, list[ir.Issue]]:
     try:
         # libclang is a maintainer-only dependency, needed only here.
@@ -129,11 +143,7 @@ def _lay_out(
     except ImportError as exc:
         message = f"computing layouts needs libclang ({exc}); install the codegen dependency group"
         raise MetadataError([message]) from None
-    # steam_api_flat.h includes "steam/steam_api.h", and the headers include each other by name.
-    # It goes first because it includes the headers in the order they need each other.
-    include = [root / "public", root / HEADER_FOLDER]
-    ordered = sorted(names, key=lambda name: (name != headers.FLAT_HEADER, name))
-    source = "".join(f'#include "{name}"\n' for name in ordered)
+    source, include = layout_source(root)
     try:
         return clang.lay_out(source, include, abi.roots(metadata), targets)
     except clang.LayoutError as exc:

@@ -1,10 +1,11 @@
 """Check layouts against themselves and against the declarations they lay out.
 
-Errors mean a layout contradicts itself, its target or its declaration. Warnings flag what a
-binding generator must not take on trust: a declaration without a complete layout, a field list
-in steam_api.json that the headers contradict, and records passed by value whose unions,
-bit-fields or packing ctypes may not pass correctly. Notes list enum values a target stores
-wrapped.
+Errors mean a layout contradicts itself, its target or its declaration, or a reviewed by_value
+override contradicts the layouts. Warnings flag what a binding generator must not take on
+trust: a declaration without a complete layout, a field list in steam_api.json that the headers
+contradict, records passed by value whose unions, bit-fields or packing ctypes may not pass
+correctly, and records passed by value that no override classifies. Notes list enum values a
+target stores wrapped.
 """
 
 import math
@@ -12,9 +13,12 @@ import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from typing import Literal
 
 from codegen import ir
 from codegen.abi import FUNDAMENTAL, TARGETS
+
+CallStatus = Literal["direct", "shim", "unverified"]
 
 _KEYWORDS = ("struct", "union", "class")
 _NAME = re.compile(r"[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*")
@@ -65,12 +69,14 @@ def parse(text: str) -> LayoutType | None:
 
 
 def check(metadata: ir.Metadata) -> Iterator[ir.Issue]:
+    yield from _reviews(metadata)
     abi = metadata.abi
     if abi is None:
         return
     yield from _targets(abi)
     for target in abi.targets:
         yield from _consistency(target)
+        yield from _sizes(target)
     yield from _coverage(metadata, abi)
     yield from _field_lists(metadata, abi)
     yield from _by_value(metadata, abi)
@@ -136,6 +142,8 @@ def _consistency(target: ir.TargetLayout) -> Iterator[ir.Issue]:
             problems.append("needs both a size and an alignment, or neither")
         elif typedef.align is not None and not _power_of_two(typedef.align):
             problems.append(f"alignment {typedef.align} is not a power of two")
+        elif typedef.size is not None and typedef.align and typedef.size % typedef.align:
+            problems.append(f"size {typedef.size} is not a multiple of the alignment")
         for problem in problems:
             yield _error("invalid-layout", name, f"typedef {typedef.name}: {problem}", "abi")
 
@@ -181,7 +189,9 @@ def _record_problems(
         return problems
     if not _power_of_two(record.align):
         return [*problems, f"alignment {record.align} is not a power of two"]
-    if record.size < 0 or record.size % record.align:
+    if record.size <= 0:
+        problems.append(f"size {record.size} is impossible: every C++ object takes a byte")
+    elif record.size % record.align:
         problems.append(f"size {record.size} is not a multiple of the alignment {record.align}")
     end = 0
     for item in record.fields:
@@ -217,6 +227,8 @@ def _field_problems(
             problems.append("a bit-field has a bit offset instead of an offset")
         elif not 0 <= item.bit_width <= item.size * 8:
             problems.append(f"{item.bit_width} bits do not fit a {item.size}-byte type")
+        elif item.bit_width == 0 and item.name:
+            problems.append("a zero-width bit-field has no name")
         elif item.bit_offset < 0 or item.bit_offset + item.bit_width > size * 8:
             problems.append("lies outside the record")
         integral = parsed.base in _INTEGERS or parsed.base.startswith("enum ")
@@ -241,6 +253,64 @@ def _field_problems(
     elif not item.name and item.bit_width is None:
         problems.append("only an anonymous record or a bit-field can have no name")
     return problems
+
+
+def _sizes(target: ir.TargetLayout) -> Iterator[ir.Issue]:
+    # Every use of a type in one target has that type's size and alignment: a record or enum's
+    # own, and for anything else the size and alignment its first use gives.
+    records = {item.name: item for item in target.records}
+    enums = {item.name: item.size for item in target.enums}
+    uses: list[tuple[str, str, int, int]] = [
+        (f"typedef {t.name}", t.type, t.size, t.align)
+        for t in target.typedefs
+        if t.size is not None and t.align is not None
+    ]
+    uses += [
+        (label, item.type, item.size, item.align)
+        for record in target.records
+        for label, item in _members(record.name, record.fields)
+    ]
+    first: dict[str, tuple[int, int, str]] = {}
+    for where, text, size, align in uses:
+        parsed = parse(text)
+        if parsed is None or parsed.base in _KEYWORDS or not parsed.count:
+            continue
+        if size % parsed.count:
+            message = f"{where}: {size} bytes cannot hold {parsed.count} equal elements"
+            yield _error("invalid-layout", target.target, message, "abi")
+            continue
+        element = size // parsed.count
+        reference = parsed.by_value()
+        if reference is None:
+            key = "a pointer" if parsed.pointers else parsed.base
+            known = first.setdefault(key, (element, align, where))
+            if known[:2] != (element, align):
+                message = (
+                    f"{where}: {key} is {element} bytes aligned to {align} here but "
+                    f"{known[0]} bytes aligned to {known[1]} in {known[2]}"
+                )
+                yield _error("invalid-layout", target.target, message, "abi")
+            continue
+        keyword, name = reference
+        record = records.get(name)
+        if keyword == "enum":
+            expected: tuple[int | None, int | None] = (enums.get(name), None)
+        else:
+            expected = (record.size, record.align) if record else (None, None)
+        if expected[0] is not None and expected[0] != element:
+            message = f"{where}: {keyword} {name} is {expected[0]} bytes, not {element}"
+            yield _error("invalid-layout", target.target, message, "abi")
+        elif expected[1] is not None and expected[1] != align:
+            message = f"{where}: {keyword} {name} is aligned to {expected[1]}, not {align}"
+            yield _error("invalid-layout", target.target, message, "abi")
+
+
+def _members(owner: str, fields: Iterable[ir.FieldLayout]) -> Iterator[tuple[str, ir.FieldLayout]]:
+    for item in fields:
+        label = f"{owner}.{item.name or '(anonymous)'}"
+        yield label, item
+        if item.record is not None:
+            yield from _members(label, item.record.fields)
 
 
 def _coverage(metadata: ir.Metadata, abi: ir.Abi) -> Iterator[ir.Issue]:
@@ -323,38 +393,131 @@ def _field_lists(metadata: ir.Metadata, abi: ir.Abi) -> Iterator[ir.Issue]:
             yield ir.Issue("warning", "json-fields-differ", message, struct.source)
 
 
-def _by_value(metadata: ir.Metadata, abi: ir.Abi) -> Iterator[ir.Issue]:
+def by_value_records(metadata: ir.Metadata) -> Iterator[tuple[ir.Function, str, str]]:
+    """Each flat function, "takes" or "returns", and a record it passes that way by value."""
     typedefs = {item.name: item.type for item in metadata.typedefs}
     named = {item.name for item in metadata.structs} | {
         item.name for item in metadata.external_types if item.declaration in _KEYWORDS
     }
-    records = [{item.name: item for item in target.records} for target in abi.targets]
     for function in metadata.functions():
         uses = [("returns", function.flat_returns or function.returns)]
         uses += [("takes", param.flat_type or param.type) for param in function.params]
         for verb, ctype in uses:
             name = _record_by_value(ctype, typedefs, named)
-            if name is None:
-                continue
-            hazards: dict[tuple[str, ...], list[str]] = defaultdict(list)
-            for index, target in enumerate(abi.targets):
-                record = records[index].get(name)
-                if record is None or record.status != "complete":
-                    hazards[()].append(target.target)
-                elif found := _hazards(record, records[index], {name}):
-                    hazards[tuple(sorted(found))].append(target.target)
-            for kinds, targets in hazards.items():
-                where = _on(targets, abi)
-                detail = (
-                    f"whose layout has {' and '.join(kinds)} {where}"
-                    if kinds
-                    else f"which has no complete layout {where}"
+            if name is not None:
+                yield function, verb, name
+
+
+def hazards(record: ir.RecordLayout, records: dict[str, ir.RecordLayout]) -> set[str]:
+    """What in a record's layout, or the layouts it holds, ctypes may not pass by value."""
+    return _hazards(record, records, {record.name})
+
+
+def by_value_status(metadata: ir.Metadata, record: str, target: str) -> CallStatus:
+    """How a binding may pass ``record`` by value on ``target``.
+
+    Only a reviewed by_value override makes a call direct. Anything it does not list is
+    unverified, so no SDK release or new target can make a by-value call direct by itself.
+    """
+    for entry in metadata.by_value:
+        if entry.record == record:
+            if target in entry.direct:
+                return "direct"
+            if target in entry.shim:
+                return "shim"
+    return "unverified"
+
+
+def misaligned(record: ir.RecordLayout) -> bool:
+    """Whether packing has put a member at an offset its type's alignment does not divide."""
+    return _misaligned(record.fields, 0)
+
+
+def _misaligned(fields: Iterable[ir.FieldLayout], base: int) -> bool:
+    for item in fields:
+        if item.offset is None:
+            continue
+        if (base + item.offset) % item.align:
+            return True
+        if item.record is not None and _misaligned(item.record.fields, base + item.offset):
+            return True
+    return False
+
+
+def sysv_in_memory(target: str, record: ir.RecordLayout) -> bool:
+    """Whether x86-64 SysV passes ``record`` in memory where ctypes would use registers.
+
+    The ABI passes a record of up to 16 bytes with a misaligned member in memory, but libffi
+    classifies it by its members' types alone and uses registers.
+    """
+    small = record.size is not None and record.size <= 16
+    return target in ("linux-x86_64", "macos-x86_64") and small and misaligned(record)
+
+
+def _reviews(metadata: ir.Metadata) -> Iterator[ir.Issue]:
+    uses: dict[str, str] = {}
+    for function, _, name in by_value_records(metadata):
+        uses.setdefault(name, function.source)
+    reviewed = Counter(entry.record for entry in metadata.by_value)
+    layouts = {
+        target.target: {item.name: item for item in target.records}
+        for target in (metadata.abi.targets if metadata.abi else ())
+    }
+    for entry in metadata.by_value:
+        problems = []
+        unknown = sorted(set(entry.direct + entry.shim) - TARGETS.keys())
+        if unknown:
+            problems.append(f"{', '.join(unknown)} are not targets codegen.abi knows")
+        if both := sorted(set(entry.direct) & set(entry.shim)):
+            problems.append(f"{', '.join(both)} cannot be both direct and shim")
+        if entry.record not in uses:
+            problems.append("no flat function takes or returns it by value")
+        if reviewed[entry.record] > 1:
+            problems.append(f"it is reviewed {reviewed[entry.record]} times")
+        # Layouts not computed for a target cannot contradict the review there.
+        for target in (item for item in entry.direct if item in layouts):
+            record = layouts[target].get(entry.record)
+            if record is None or record.status != "complete":
+                problems.append(f"it is direct on {target}, where it has no complete layout")
+            elif sysv_in_memory(target, record):
+                problems.append(
+                    f"it is direct on {target}, but a misaligned member makes SysV pass it in "
+                    "memory, where ctypes uses registers"
                 )
-                message = (
-                    f"{function.flat_name} {verb} {name} by value, {detail}; ctypes may not pass "
-                    "such a record correctly, so check it before binding the function"
-                )
-                yield ir.Issue("warning", "by-value-record", message, function.source)
+        for problem in problems:
+            message = f"by_value {entry.record}: {problem}"
+            yield ir.Issue("error", "invalid-by-value", message, entry.source)
+    for name, source in sorted(uses.items()):
+        if name not in reviewed:
+            message = (
+                f"{name} is passed by value, but no by_value override says how ctypes may pass "
+                "it, so it is unverified on every target"
+            )
+            yield ir.Issue("warning", "unreviewed-by-value", message, source)
+
+
+def _by_value(metadata: ir.Metadata, abi: ir.Abi) -> Iterator[ir.Issue]:
+    records = [{item.name: item for item in target.records} for target in abi.targets]
+    for function, verb, name in by_value_records(metadata):
+        found: dict[tuple[str, ...], list[str]] = defaultdict(list)
+        for index, target in enumerate(abi.targets):
+            record = records[index].get(name)
+            if record is None or record.status != "complete":
+                found[()].append(target.target)
+            elif present := hazards(record, records[index]):
+                found[tuple(sorted(present))].append(target.target)
+        for kinds, targets in found.items():
+            where = _on(targets, abi)
+            detail = (
+                f"whose layout has {' and '.join(kinds)} {where}"
+                if kinds
+                else f"which has no complete layout {where}"
+            )
+            message = (
+                f"{function.flat_name} {verb} {name} by value, {detail}; ctypes may not pass "
+                "such a record correctly, so check it before binding the function"
+            )
+            yield ir.Issue("warning", "by-value-record", message, function.source)
 
 
 def _record_by_value(ctype: ir.CType, typedefs: dict[str, ir.CType], named: set[str]) -> str | None:

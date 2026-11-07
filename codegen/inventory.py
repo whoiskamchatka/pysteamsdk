@@ -1,6 +1,8 @@
 from collections import Counter, defaultdict
 
 from codegen import ir
+from codegen.abi import TARGETS
+from codegen.abi.checks import by_value_records, by_value_status
 from codegen.extract import Extraction
 from codegen.extract.checks import expected_flat_signatures
 
@@ -57,6 +59,17 @@ def layout_counts(metadata: ir.Metadata) -> dict[str, int]:
             storage[enum.name].add((enum.underlying, enum.size))
     found["records_differing"] = sum(len(shape) > 1 for shape in shapes.values())
     found["enums_differing"] = sum(len(kinds) > 1 for kinds in storage.values())
+    return found
+
+
+def by_value_counts(metadata: ir.Metadata) -> dict[str, int]:
+    """How many records the flat API passes by value, and how each target may pass them."""
+    names = sorted({name for _, _, name in by_value_records(metadata)})
+    found = {"by_value_records": len(names)}
+    for target in TARGETS:
+        statuses = Counter(by_value_status(metadata, name, target) for name in names)
+        for status in ("direct", "shim", "unverified"):
+            found[f"{target}_{status}"] = statuses[status]
     return found
 
 
@@ -153,6 +166,8 @@ def render(extraction: Extraction) -> str:
         "",
         *_layout_rows(metadata),
         "",
+        *_by_value_rows(metadata),
+        "",
         "Issues: " + ", ".join(plural(severities[s], s) for s in ir.SEVERITIES),
     ]
     notes: Counter[str] = Counter()
@@ -185,6 +200,23 @@ def _layout_rows(metadata: ir.Metadata) -> list[str]:
         rows += [
             _row("records laid out differently", found["records_differing"], "between targets"),
             _row("enums stored differently", found["enums_differing"], "between targets"),
+        ]
+    return rows
+
+
+def _by_value_rows(metadata: ir.Metadata) -> list[str]:
+    found = by_value_counts(metadata)
+    rows = ["By-value records, as codegen/overrides.toml classifies them for ctypes"]
+    rows.append(_row("records", found["by_value_records"], "taken or returned by value"))
+    if found["by_value_records"]:
+        rows += [
+            _row(
+                target,
+                found[f"{target}_direct"],
+                f"direct, {found[f'{target}_shim']} shim, "
+                f"{found[f'{target}_unverified']} unverified",
+            )
+            for target in TARGETS
         ]
     return rows
 

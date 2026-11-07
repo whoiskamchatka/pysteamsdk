@@ -47,9 +47,9 @@ def test_integer_and_float_values_stay_distinct(widgets: ir.Metadata) -> None:
 @pytest.mark.parametrize(
     ("version", "message"),
     [
-        (2, "format 2 is not supported; extract the SDK again for 3"),
-        (4, "format 4 is not supported"),
-        ("3", "format '3' is not supported"),
+        (3, "format 3 is not supported; extract the SDK again for 4"),
+        (5, "format 5 is not supported"),
+        ("4", "format '4' is not supported"),
         (True, "format True is not supported"),
         (None, "format None is not supported"),
     ],
