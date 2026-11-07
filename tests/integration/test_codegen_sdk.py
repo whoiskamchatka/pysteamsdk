@@ -1,20 +1,25 @@
 """Extract the developer's own Steamworks SDK. Opt in with STEAMWORKS_SDK; CI never sets it."""
 
+import json
 import os
+import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
 import pytest
 
-from codegen import ir
+from codegen import bindings, ir
 from codegen.abi import TARGETS, Roots, probe
-from codegen.abi.checks import by_value_records, parse
+from codegen.abi.checks import by_value_records, by_value_status, parse
 from codegen.extract import Extraction, extract, layout_source
 from codegen.extract.overrides import DEFAULT, load
 from codegen.inventory import by_value_counts, counts, layout_counts
 from codegen.validate import validate
+from pysteamsdk._native import loader
 
 SDK = os.environ.get("STEAMWORKS_SDK", "")
+DECLARATIONS_CHILD = Path(__file__).with_name("declarations_child.py")
 
 pytestmark = [
     pytest.mark.sdk,
@@ -73,6 +78,19 @@ BY_VALUE_165 = {
     "macos-x86_64_unverified": 5,
     "macos-arm64_unverified": 5,
 }
+# What codegen.bindings leaves out of SDK 1.65 on every target, by reason, besides records passed
+# by value, which follow the by_value reviews: 48 exports without a signature, 24 functions of or
+# taking the matchmaking responses the caller implements, 10 functions and 10 typedefs that are
+# callbacks, 9 functions and 5 records the SDK never defines, and 9 game server accessors.
+SKIPPED_165 = {
+    "no-signature": 48,
+    "callback-object": 24,
+    "callback": 20,
+    "opaque": 14,
+    "game-server": 9,
+}
+# Flat functions generated where the compiler and the by_value reviews were checked natively.
+GENERATED_165 = {"windows-x86_64": 944, "linux-x86_64": 943}
 # The records in tests/codegen/fixtures/calls.h whose calls stand for the SDK's by-value ones.
 LOOK_ALIKES = {
     "Address": "SteamIPAddress_t",
@@ -180,6 +198,62 @@ def test_sdk_165_layouts_match_the_native_compiler(extraction: Extraction) -> No
         if probe.risks(target, records[name], report.facts[name], verbs)
     ]
     assert len(risky) == {"linux-x86_64": 1, "macos-x86_64": 1}.get(target, 0)
+
+
+def test_sdk_165_declarations_cover_the_flat_api_and_bind(
+    extraction: Extraction, tmp_path: Path
+) -> None:
+    # Generated from layouts the host's compiler checks, then imported, which checks every
+    # record against ctypes, and attached to the SDK's own library without starting Steam.
+    target = probe.host_target()
+    if target is None:
+        pytest.skip("this machine is not one of the targets")
+    try:
+        compiler = probe.find_compiler()
+    except probe.ProbeError as exc:
+        pytest.skip(str(exc))
+    metadata = extraction.metadata
+    assert metadata.abi is not None
+    (layout,) = [item for item in metadata.abi.targets if item.target == target]
+    report = probe.verify(layout, *layout_source(SDK), compiler)
+    generated = bindings.generate(metadata, bindings.Verification.from_report(report, layout))
+    skipped = {item.name: item.category for item in generated.skipped}
+    flat = {function.flat_name for function in metadata.functions()}
+    assert set(generated.generated["function"]) == flat - skipped.keys()
+    for function, _, name in by_value_records(metadata):
+        status = by_value_status(metadata, name, target)
+        expected = None if status == "direct" else f"by-value-{status}"
+        assert skipped.get(function.flat_name) == expected, function.flat_name
+    categories = Counter(skipped.values())
+    for category in ("by-value-shim", "by-value-unverified"):
+        categories.pop(category, None)
+    assert categories == SKIPPED_165
+    # Measured on Windows and Linux; a Mac has yet to run this.
+    if target in GENERATED_165:
+        assert len(generated.generated["function"]) == GENERATED_165[target]
+    assert len(generated.generated["accessor"]) == 25
+    assert len(generated.generated["record"]) == 241
+    declarations = tmp_path / "declarations.py"
+    declarations.write_text(generated.text, encoding="utf-8")
+    name, folder = loader._target(*loader._host())
+    library = Path(SDK, "redistributable_bin", folder, name).resolve()
+    done = subprocess.run(
+        [sys.executable, "-W", "error", str(DECLARATIONS_CHILD), str(declarations), str(library)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+    found = json.loads(done.stdout)
+    classes = sum(
+        1 + _in_place(record.fields) for record in layout.records if record.status == "complete"
+    )
+    functions = len(generated.generated["function"]) + len(generated.generated["accessor"])
+    assert (found["records"], found["functions"]) == (classes, functions)
+
+
+def _in_place(fields: tuple[ir.FieldLayout, ...]) -> int:
+    return sum(1 + _in_place(item.record.fields) for item in fields if item.record is not None)
 
 
 def test_the_call_tests_stand_for_every_record_passed_by_value(extraction: Extraction) -> None:

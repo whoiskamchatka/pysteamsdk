@@ -4,11 +4,13 @@
     python -m codegen extract SDK --output FILE
     python -m codegen check FILE
     python -m codegen verify SDK [--metadata FILE]
+    python -m codegen bindings SDK --output FILE [--metadata FILE]
 
 SDK is the folder that contains public/steam. inventory and extract apply the reviewed
 corrections in codegen/overrides.toml and compute layouts for every target with libclang unless
-told otherwise. verify checks one target's layouts against a native C++ compiler. Exit status:
-0 when no issue is an error and no layout differs, 1 when some do, 2 when the input cannot be
+told otherwise. verify checks one target's layouts against a native C++ compiler, and bindings
+checks them the same way before it writes ctypes declarations for that target. Exit status: 0
+when no issue is an error and no layout differs, 1 when some do, 2 when the input cannot be
 read or the compiler cannot be run.
 """
 
@@ -18,7 +20,7 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
-from codegen import ir
+from codegen import bindings, ir
 from codegen.abi import TARGETS, probe
 from codegen.abi.checks import check as check_layouts
 from codegen.extract import (
@@ -43,7 +45,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     inventory = commands.add_parser("inventory", help="report what the SDK metadata contains")
     write = commands.add_parser("extract", help="write the normalized metadata as JSON")
     verify = commands.add_parser("verify", help="check layouts against a native C++ compiler")
-    for command in (inventory, write, verify):
+    generate = commands.add_parser(
+        "bindings", help="check layouts, then write ctypes declarations for the compiler's target"
+    )
+    for command in (inventory, write, verify, generate):
         command.add_argument("sdk", type=Path, help="the SDK folder that contains public/steam")
         choice = command.add_mutually_exclusive_group()
         choice.add_argument(
@@ -56,7 +61,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         choice.add_argument(
             "--no-overrides", dest="overrides", action="store_const", const=None, help="apply none"
         )
-        if command is verify:
+        if command in (verify, generate):
             continue
         layouts = command.add_mutually_exclusive_group()
         layouts.add_argument(
@@ -76,40 +81,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     write.add_argument(
         "-o", "--output", type=Path, required=True, help="file to write, outside this repository"
     )
-    verify.add_argument(
-        "--target",
-        choices=TARGETS,
-        help="the target the compiler builds for (default: this machine's)",
-    )
-    verify.add_argument(
-        "--metadata",
-        type=Path,
-        metavar="FILE",
-        help="check the layouts in a file extract wrote instead of computing them",
-    )
-    verify.add_argument(
-        "--cxx", metavar="COMPILER", help="default: $CXX, else cl on Windows and c++ elsewhere"
-    )
-    verify.add_argument(
-        "--cxx-flag",
-        dest="cxx_flags",
-        action="append",
-        default=[],
-        metavar="FLAG",
-        help="pass FLAG to the compiler, as in --cxx-flag=-arch --cxx-flag=x86_64",
-    )
+    for command in (verify, generate):
+        command.add_argument(
+            "--target",
+            choices=TARGETS,
+            help="the target the compiler builds for (default: this machine's)",
+        )
+        command.add_argument(
+            "--metadata",
+            type=Path,
+            metavar="FILE",
+            help="check the layouts in a file extract wrote instead of computing them",
+        )
+        command.add_argument(
+            "--cxx", metavar="COMPILER", help="default: $CXX, else cl on Windows and c++ elsewhere"
+        )
+        command.add_argument(
+            "--cxx-flag",
+            dest="cxx_flags",
+            action="append",
+            default=[],
+            metavar="FLAG",
+            help="pass FLAG to the compiler, as in --cxx-flag=-arch --cxx-flag=x86_64",
+        )
+        command.add_argument(
+            "--timeout",
+            type=float,
+            default=probe.COMPILE_TIMEOUT,
+            metavar="SECONDS",
+            help=f"how long one compile may take (default: {probe.COMPILE_TIMEOUT:g})",
+        )
     verify.add_argument(
         "--only",
         type=_names,
         metavar="NAMES",
         help="comma-separated records, enums and typedefs to check (default: all)",
     )
-    verify.add_argument(
-        "--timeout",
-        type=float,
-        default=probe.COMPILE_TIMEOUT,
-        metavar="SECONDS",
-        help=f"how long one compile may take (default: {probe.COMPILE_TIMEOUT:g})",
+    generate.add_argument(
+        "-o", "--output", type=Path, required=True, help="file to write, outside this repository"
     )
     check = commands.add_parser("check", help="validate metadata that extract wrote")
     check.add_argument("metadata", type=Path, help="the metadata file to check")
@@ -117,13 +126,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "check":
         return _check(args.metadata)
-    if args.command == "verify":
-        return _verify(args)
-    if args.command == "extract" and args.output.resolve().is_relative_to(REPOSITORY):
-        # The IR is derived from Valve's SDK; it stays out of the repository until the
+    writes = args.command in ("extract", "bindings")
+    if writes and args.output.resolve().is_relative_to(REPOSITORY):
+        # Both are derived from Valve's SDK; they stay out of the repository until the
         # redistribution review decides otherwise.
         print(f"Refusing to write {args.output} inside the repository.", file=sys.stderr)
         return 2
+    if args.command == "verify":
+        return _verify(args)
+    if args.command == "bindings":
+        return _bindings(args)
     try:
         extraction = extract(args.sdk, _read_overrides(args.overrides), args.targets)
     except MetadataError as exc:
@@ -154,6 +166,39 @@ def _names(text: str) -> tuple[str, ...]:
 
 
 def _verify(args: argparse.Namespace) -> int:
+    found = _probe(args)
+    if isinstance(found, int):
+        return found
+    metadata, layout, report, errors = found
+    sys.stdout.write(probe.render(report, layout, metadata))
+    return 1 if report.failures or errors else 0
+
+
+def _bindings(args: argparse.Namespace) -> int:
+    found = _probe(args)
+    if isinstance(found, int):
+        return found
+    metadata, layout, report, errors = found
+    if report.failures or errors:
+        sys.stdout.write(probe.render(report, layout, metadata))
+        print(f"No declarations written: not every layout for {layout.target} is correct.")
+        return 1
+    try:
+        generated = bindings.generate(metadata, bindings.Verification.from_report(report, layout))
+    except bindings.GenerationError as exc:
+        print(f"No declarations written:\n{exc}", file=sys.stderr)
+        return 1
+    args.output.write_text(generated.text, encoding="utf-8", newline="\n")
+    sys.stdout.write(bindings.summary(generated))
+    print(f"Wrote {args.output}")
+    return 0
+
+
+def _probe(
+    args: argparse.Namespace,
+) -> tuple[ir.Metadata, ir.TargetLayout, probe.Report, list[ir.Issue]] | int:
+    """The metadata, its layouts for the compiler's target, what the compiler found of them, and
+    the metadata's errors, which are printed; or an exit status when any is out of reach."""
     target = args.target or probe.host_target()
     if target is None:
         print("This machine is not one of the targets; pass --target.", file=sys.stderr)
@@ -185,13 +230,13 @@ def _verify(args: argparse.Namespace) -> int:
         print(f"The metadata has no layouts for {target}.", file=sys.stderr)
         return 2
     include, folders = layout_source(args.sdk)
+    only = getattr(args, "only", None)
     try:
-        report = probe.verify(layouts[0], include, folders, compiler, args.only, args.timeout)
+        report = probe.verify(layouts[0], include, folders, compiler, only, args.timeout)
     except probe.ProbeError as exc:
         print(f"Cannot verify {target}: {exc}", file=sys.stderr)
         return 2
-    sys.stdout.write(probe.render(report, layouts[0], metadata))
-    return 1 if report.failures or errors else 0
+    return metadata, layouts[0], report, errors
 
 
 def _read_overrides(path: Path | None) -> Overrides | None:

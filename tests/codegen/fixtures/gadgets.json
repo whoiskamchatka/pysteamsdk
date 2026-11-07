@@ -1,0 +1,830 @@
+{
+ "callback_structs": [
+  {
+   "callback_id": 9101,
+   "struct": "GadgetReady_t",
+   "fields": [
+    {
+     "fieldname": "m_eResult",
+     "fieldtype": "EGadgetResult"
+    },
+    {
+     "fieldname": "m_ulId",
+     "fieldtype": "uint64"
+    }
+   ]
+  },
+  {
+   "callback_id": 9102,
+   "struct": "GadgetJoined_t",
+   "fields": [
+    {
+     "fieldname": "m_gadget",
+     "fieldtype": "CGadgetID"
+    },
+    {
+     "fieldname": "m_ubSeat",
+     "fieldtype": "uint8"
+    }
+   ]
+  }
+ ],
+ "consts": [
+  {
+   "constname": "k_cchGadgetName",
+   "consttype": "int",
+   "constval": "32"
+  },
+  {
+   "constname": "k_flGadgetScale",
+   "consttype": "float",
+   "constval": "1.5"
+  }
+ ],
+ "enums": [
+  {
+   "enumname": "EGadgetColor",
+   "values": [
+    {
+     "name": "k_EGadgetColorRed",
+     "value": "0"
+    },
+    {
+     "name": "k_EGadgetColorBlue",
+     "value": "1"
+    },
+    {
+     "name": "k_EGadgetColorAll",
+     "value": "-1"
+    }
+   ]
+  },
+  {
+   "enumname": "EGadgetKind",
+   "values": [
+    {
+     "name": "k_EGadgetKindInt",
+     "value": "1"
+    },
+    {
+     "name": "k_EGadgetKindText",
+     "value": "2"
+    }
+   ]
+  },
+  {
+   "enumname": "EGadgetResult",
+   "values": [
+    {
+     "name": "k_EGadgetResultOK",
+     "value": "1"
+    },
+    {
+     "name": "k_EGadgetResultFail",
+     "value": "2"
+    },
+    {
+     "name": "k_EGadgetResultBusy",
+     "value": "7"
+    }
+   ]
+  }
+ ],
+ "interfaces": [
+  {
+   "classname": "IGadgetBox",
+   "version_string": "GadgetBox001",
+   "accessors": [
+    {
+     "kind": "global",
+     "name": "GadgetBox",
+     "name_flat": "GadgetAPI_GadgetBox_v001"
+    },
+    {
+     "kind": "gameserver",
+     "name": "GameServerGadgetBox",
+     "name_flat": "GadgetAPI_GameServerGadgetBox_v001"
+    }
+   ],
+   "fields": [],
+   "methods": [
+    {
+     "methodname": "Count",
+     "methodname_flat": "GadgetAPI_IGadgetBox_Count",
+     "params": [],
+     "returntype": "uint32"
+    }
+   ]
+  },
+  {
+   "classname": "IGadgetListener",
+   "fields": [],
+   "methods": [
+    {
+     "methodname": "OnDone",
+     "methodname_flat": "GadgetAPI_IGadgetListener_OnDone",
+     "params": [
+      {
+       "paramname": "code",
+       "paramtype": "int32"
+      }
+     ],
+     "returntype": "void"
+    }
+   ]
+  },
+  {
+   "classname": "IGadgets",
+   "version_string": "Gadgets001",
+   "accessors": [
+    {
+     "kind": "user",
+     "name": "Gadgets",
+     "name_flat": "GadgetAPI_Gadgets_v001"
+    }
+   ],
+   "enums": [
+    {
+     "enumname": "EMode",
+     "fqname": "IGadgets::EMode",
+     "values": [
+      {
+       "name": "k_EModeSlow",
+       "value": "0"
+      },
+      {
+       "name": "k_EModeFast",
+       "value": "1"
+      }
+     ]
+    }
+   ],
+   "fields": [],
+   "methods": [
+    {
+     "methodname": "Echo8",
+     "methodname_flat": "GadgetAPI_IGadgets_Echo8",
+     "params": [
+      {
+       "paramname": "nValue",
+       "paramtype": "int8"
+      }
+     ],
+     "returntype": "int8"
+    },
+    {
+     "methodname": "EchoU8",
+     "methodname_flat": "GadgetAPI_IGadgets_EchoU8",
+     "params": [
+      {
+       "paramname": "unValue",
+       "paramtype": "uint8"
+      }
+     ],
+     "returntype": "uint8"
+    },
+    {
+     "methodname": "Echo16",
+     "methodname_flat": "GadgetAPI_IGadgets_Echo16",
+     "params": [
+      {
+       "paramname": "nValue",
+       "paramtype": "int16"
+      }
+     ],
+     "returntype": "int16"
+    },
+    {
+     "methodname": "EchoU16",
+     "methodname_flat": "GadgetAPI_IGadgets_EchoU16",
+     "params": [
+      {
+       "paramname": "unValue",
+       "paramtype": "uint16"
+      }
+     ],
+     "returntype": "uint16"
+    },
+    {
+     "methodname": "Echo32",
+     "methodname_flat": "GadgetAPI_IGadgets_Echo32",
+     "params": [
+      {
+       "paramname": "nValue",
+       "paramtype": "int32"
+      }
+     ],
+     "returntype": "int32"
+    },
+    {
+     "methodname": "EchoU32",
+     "methodname_flat": "GadgetAPI_IGadgets_EchoU32",
+     "params": [
+      {
+       "paramname": "unValue",
+       "paramtype": "uint32"
+      }
+     ],
+     "returntype": "uint32"
+    },
+    {
+     "methodname": "Echo64",
+     "methodname_flat": "GadgetAPI_IGadgets_Echo64",
+     "params": [
+      {
+       "paramname": "nValue",
+       "paramtype": "int64"
+      }
+     ],
+     "returntype": "int64"
+    },
+    {
+     "methodname": "EchoU64",
+     "methodname_flat": "GadgetAPI_IGadgets_EchoU64",
+     "params": [
+      {
+       "paramname": "unValue",
+       "paramtype": "uint64"
+      }
+     ],
+     "returntype": "uint64"
+    },
+    {
+     "methodname": "EchoFloat",
+     "methodname_flat": "GadgetAPI_IGadgets_EchoFloat",
+     "params": [
+      {
+       "paramname": "flValue",
+       "paramtype": "float"
+      }
+     ],
+     "returntype": "float"
+    },
+    {
+     "methodname": "EchoDouble",
+     "methodname_flat": "GadgetAPI_IGadgets_EchoDouble",
+     "params": [
+      {
+       "paramname": "dValue",
+       "paramtype": "double"
+      }
+     ],
+     "returntype": "double"
+    },
+    {
+     "methodname": "EchoLong",
+     "methodname_flat": "GadgetAPI_IGadgets_EchoLong",
+     "params": [
+      {
+       "paramname": "nValue",
+       "paramtype": "long"
+      }
+     ],
+     "returntype": "long"
+    },
+    {
+     "methodname": "Invert",
+     "methodname_flat": "GadgetAPI_IGadgets_Invert",
+     "params": [
+      {
+       "paramname": "bValue",
+       "paramtype": "bool"
+      }
+     ],
+     "returntype": "bool"
+    },
+    {
+     "methodname": "Mix",
+     "methodname_flat": "GadgetAPI_IGadgets_Mix",
+     "params": [
+      {
+       "paramname": "a",
+       "paramtype": "int8"
+      },
+      {
+       "paramname": "b",
+       "paramtype": "uint16"
+      },
+      {
+       "paramname": "c",
+       "paramtype": "int32"
+      },
+      {
+       "paramname": "d",
+       "paramtype": "uint64"
+      },
+      {
+       "paramname": "e",
+       "paramtype": "float"
+      },
+      {
+       "paramname": "f",
+       "paramtype": "double"
+      },
+      {
+       "paramname": "g",
+       "paramtype": "bool"
+      },
+      {
+       "paramname": "h",
+       "paramtype": "EGadgetColor"
+      }
+     ],
+     "returntype": "uint64"
+    },
+    {
+     "methodname": "Classify",
+     "methodname_flat": "GadgetAPI_IGadgets_Classify",
+     "params": [
+      {
+       "paramname": "nValue",
+       "paramtype": "int32"
+      }
+     ],
+     "returntype": "EGadgetResult"
+    },
+    {
+     "methodname": "GetColorAll",
+     "methodname_flat": "GadgetAPI_IGadgets_GetColorAll",
+     "params": [],
+     "returntype": "EGadgetColor"
+    },
+    {
+     "methodname": "SetMode",
+     "methodname_flat": "GadgetAPI_IGadgets_SetMode",
+     "params": [
+      {
+       "paramname": "eMode",
+       "paramtype": "IGadgets::EMode"
+      }
+     ],
+     "returntype": "int32"
+    },
+    {
+     "methodname": "Length",
+     "methodname_flat": "GadgetAPI_IGadgets_Length",
+     "params": [
+      {
+       "paramname": "pchText",
+       "paramtype": "const char *"
+      }
+     ],
+     "returntype": "uint32"
+    },
+    {
+     "methodname": "FillName",
+     "methodname_flat": "GadgetAPI_IGadgets_FillName",
+     "params": [
+      {
+       "paramname": "pchBuffer",
+       "paramtype": "char *",
+       "out_string_count": "cchBuffer"
+      },
+      {
+       "paramname": "cchBuffer",
+       "paramtype": "int32"
+      }
+     ],
+     "returntype": "int32"
+    },
+    {
+     "methodname": "GetName",
+     "methodname_flat": "GadgetAPI_IGadgets_GetName",
+     "params": [],
+     "returntype": "const char *"
+    },
+    {
+     "methodname": "GetNoName",
+     "methodname_flat": "GadgetAPI_IGadgets_GetNoName",
+     "params": [],
+     "returntype": "const char *"
+    },
+    {
+     "methodname": "Checksum",
+     "methodname_flat": "GadgetAPI_IGadgets_Checksum",
+     "params": [
+      {
+       "paramname": "pData",
+       "paramtype": "const void *",
+       "buffer_count": "cbData"
+      },
+      {
+       "paramname": "cbData",
+       "paramtype": "uint32"
+      }
+     ],
+     "returntype": "uint32"
+    },
+    {
+     "methodname": "Scribble",
+     "methodname_flat": "GadgetAPI_IGadgets_Scribble",
+     "params": [
+      {
+       "paramname": "pData",
+       "paramtype": "void *",
+       "out_buffer_count": "cbData"
+      },
+      {
+       "paramname": "cbData",
+       "paramtype": "uint32"
+      }
+     ],
+     "returntype": "uint32"
+    },
+    {
+     "methodname": "GetCount",
+     "methodname_flat": "GadgetAPI_IGadgets_GetCount",
+     "params": [
+      {
+       "paramname": "pnCount",
+       "paramtype": "int32 *"
+      }
+     ],
+     "returntype": "bool"
+    },
+    {
+     "methodname": "Locate",
+     "methodname_flat": "GadgetAPI_IGadgets_Locate",
+     "params": [
+      {
+       "paramname": "pSpot",
+       "paramtype": "GadgetSpot_t *",
+       "out_struct": ""
+      }
+     ],
+     "returntype": "bool"
+    },
+    {
+     "methodname": "Distance",
+     "methodname_flat": "GadgetAPI_IGadgets_Distance",
+     "params": [
+      {
+       "paramname": "from",
+       "paramtype": "const GadgetSpot_t &"
+      },
+      {
+       "paramname": "to",
+       "paramtype": "const GadgetSpot_t &"
+      }
+     ],
+     "returntype": "int64"
+    },
+    {
+     "methodname": "Explain",
+     "methodname_flat": "GadgetAPI_IGadgets_Explain",
+     "params": [
+      {
+       "paramname": "errMsg",
+       "paramtype": "GadgetErrMsg &"
+      }
+     ],
+     "returntype": "bool"
+    },
+    {
+     "methodname": "GetSpot",
+     "methodname_flat": "GadgetAPI_IGadgets_GetSpot",
+     "params": [],
+     "returntype": "GadgetSpot_t"
+    },
+    {
+     "methodname": "SpotSum",
+     "methodname_flat": "GadgetAPI_IGadgets_SpotSum",
+     "params": [
+      {
+       "paramname": "spot",
+       "paramtype": "GadgetSpot_t"
+      }
+     ],
+     "returntype": "int64"
+    },
+    {
+     "methodname": "Area",
+     "methodname_flat": "GadgetAPI_IGadgets_Area",
+     "params": [
+      {
+       "paramname": "size",
+       "paramtype": "GadgetSize_t"
+      }
+     ],
+     "returntype": "uint32"
+    },
+    {
+     "methodname": "PairSum",
+     "methodname_flat": "GadgetAPI_IGadgets_PairSum",
+     "params": [
+      {
+       "paramname": "pair",
+       "paramtype": "GadgetPair_t"
+      }
+     ],
+     "returntype": "uint64"
+    },
+    {
+     "methodname": "SetHook",
+     "methodname_flat": "GadgetAPI_IGadgets_SetHook",
+     "params": [
+      {
+       "paramname": "pfnHook",
+       "paramtype": "GadgetHook_t"
+      }
+     ],
+     "returntype": "void"
+    },
+    {
+     "methodname": "Listen",
+     "methodname_flat": "GadgetAPI_IGadgets_Listen",
+     "params": [
+      {
+       "paramname": "pListener",
+       "paramtype": "IGadgetListener *"
+      }
+     ],
+     "returntype": "void"
+    },
+    {
+     "methodname": "ReadTicket",
+     "methodname_flat": "GadgetAPI_IGadgets_ReadTicket",
+     "params": [
+      {
+       "paramname": "pTicket",
+       "paramtype": "GadgetTicket *"
+      }
+     ],
+     "returntype": "bool"
+    },
+    {
+     "methodname": "Inspect",
+     "methodname_flat": "GadgetAPI_IGadgets_Inspect",
+     "params": [
+      {
+       "paramname": "pMystery",
+       "paramtype": "GadgetMystery_t *"
+      }
+     ],
+     "returntype": "bool"
+    },
+    {
+     "methodname": "OpenBox",
+     "methodname_flat": "GadgetAPI_IGadgets_OpenBox",
+     "params": [],
+     "returntype": "IGadgetBox *"
+    },
+    {
+     "methodname": "Fetch",
+     "methodname_flat": "GadgetAPI_IGadgets_Fetch",
+     "params": [
+      {
+       "paramname": "gadgetID",
+       "paramtype": "CGadgetID",
+       "paramtype_flat": "uint64_gadgetid"
+      }
+     ],
+     "returntype": "GadgetCall_t",
+     "callresult": "GadgetReady_t"
+    },
+    {
+     "methodname": "GetOwner",
+     "methodname_flat": "GadgetAPI_IGadgets_GetOwner",
+     "params": [],
+     "returntype": "CGadgetID",
+     "returntype_flat": "uint64_gadgetid"
+    },
+    {
+     "methodname": "GetOwnerInto",
+     "methodname_flat": "GadgetAPI_IGadgets_GetOwnerInto",
+     "params": [
+      {
+       "paramname": "pOwner",
+       "paramtype": "CGadgetID *"
+      }
+     ],
+     "returntype": "bool"
+    },
+    {
+     "methodname": "Poll",
+     "methodname_flat": "GadgetAPI_IGadgets_Poll",
+     "params": [
+      {
+       "paramname": "pReady",
+       "paramtype": "GadgetReady_t *"
+      }
+     ],
+     "returntype": "bool"
+    },
+    {
+     "methodname": "Join",
+     "methodname_flat": "GadgetAPI_IGadgets_Join",
+     "params": [
+      {
+       "paramname": "pJoined",
+       "paramtype": "GadgetJoined_t *"
+      }
+     ],
+     "returntype": "bool",
+     "callback": "GadgetJoined_t"
+    },
+    {
+     "methodname": "Describe",
+     "methodname_flat": "GadgetAPI_IGadgets_Describe",
+     "params": [
+      {
+       "paramname": "pValue",
+       "paramtype": "GadgetValue_t *"
+      }
+     ],
+     "returntype": "bool"
+    },
+    {
+     "methodname": "GetAddress",
+     "methodname_flat": "GadgetAPI_IGadgets_GetAddress",
+     "params": [
+      {
+       "paramname": "pAddress",
+       "paramtype": "GadgetAddress_t *"
+      }
+     ],
+     "returntype": "bool"
+    },
+    {
+     "methodname": "CountNames",
+     "methodname_flat": "GadgetAPI_IGadgets_CountNames",
+     "params": [
+      {
+       "paramname": "ppchNames",
+       "paramtype": "const char **",
+       "array_count": "nNames"
+      },
+      {
+       "paramname": "nNames",
+       "paramtype": "int32"
+      }
+     ],
+     "returntype": "int32"
+    }
+   ]
+  }
+ ],
+ "structs": [
+  {
+   "struct": "GadgetAddress_t",
+   "fields": [
+    {
+     "fieldname": "m_rgubIPv6",
+     "fieldtype": "uint8 [16]"
+    },
+    {
+     "fieldname": "m_usPort",
+     "fieldtype": "uint16"
+    },
+    {
+     "fieldname": "m_bValid",
+     "fieldtype": "bool"
+    }
+   ],
+   "methods": [
+    {
+     "methodname": "Clear",
+     "methodname_flat": "GadgetAPI_GadgetAddress_t_Clear",
+     "params": [],
+     "returntype": "void"
+    },
+    {
+     "methodname": "IsLoopback",
+     "methodname_flat": "GadgetAPI_GadgetAddress_t_IsLoopback",
+     "params": [],
+     "returntype": "bool"
+    }
+   ]
+  },
+  {
+   "struct": "GadgetPair_t",
+   "fields": [
+    {
+     "fieldname": "m_ubFirst",
+     "fieldtype": "uint8"
+    },
+    {
+     "fieldname": "m_ulSecond",
+     "fieldtype": "uint64"
+    }
+   ]
+  },
+  {
+   "struct": "GadgetSize_t",
+   "fields": [
+    {
+     "fieldname": "m_unWidth",
+     "fieldtype": "uint16"
+    },
+    {
+     "fieldname": "m_unHeight",
+     "fieldtype": "uint16"
+    }
+   ]
+  },
+  {
+   "struct": "GadgetSpot_t",
+   "fields": [
+    {
+     "fieldname": "m_nX",
+     "fieldtype": "int32"
+    },
+    {
+     "fieldname": "m_nY",
+     "fieldtype": "int32"
+    },
+    {
+     "fieldname": "m_flZ",
+     "fieldtype": "float"
+    }
+   ]
+  },
+  {
+   "struct": "GadgetValue_t",
+   "fields": [
+    {
+     "fieldname": "m_eKind",
+     "fieldtype": "EGadgetKind"
+    },
+    {
+     "fieldname": "m_val",
+     "fieldtype": "int64"
+    },
+    {
+     "fieldname": "m_szLabel",
+     "fieldtype": "char [8]"
+    },
+    {
+     "fieldname": "m_grid",
+     "fieldtype": "int16 [2][3]"
+    },
+    {
+     "fieldname": "m_spot",
+     "fieldtype": "GadgetSpot_t"
+    },
+    {
+     "fieldname": "m_dScale",
+     "fieldtype": "double"
+    },
+    {
+     "fieldname": "m_pfnHook",
+     "fieldtype": "GadgetHook_t"
+    },
+    {
+     "fieldname": "m_pNext",
+     "fieldtype": "GadgetValue_t *"
+    }
+   ]
+  }
+ ],
+ "typedefs": [
+  {
+   "typedef": "GadgetCall_t",
+   "type": "uint64"
+  },
+  {
+   "typedef": "GadgetErrMsg",
+   "type": "char [64]"
+  },
+  {
+   "typedef": "GadgetHandle_t",
+   "type": "uint32"
+  },
+  {
+   "typedef": "GadgetHook_t",
+   "type": "void (*)(int32)"
+  },
+  {
+   "typedef": "int16",
+   "type": "short"
+  },
+  {
+   "typedef": "int32",
+   "type": "int"
+  },
+  {
+   "typedef": "int64",
+   "type": "long long"
+  },
+  {
+   "typedef": "int8",
+   "type": "signed char"
+  },
+  {
+   "typedef": "uint16",
+   "type": "unsigned short"
+  },
+  {
+   "typedef": "uint32",
+   "type": "unsigned int"
+  },
+  {
+   "typedef": "uint64",
+   "type": "unsigned long long"
+  },
+  {
+   "typedef": "uint8",
+   "type": "unsigned char"
+  }
+ ]
+}

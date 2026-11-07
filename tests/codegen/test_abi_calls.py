@@ -8,6 +8,7 @@ host's C++ compiler, so they run where the probe tests do.
 
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -49,28 +50,10 @@ CASES = [
 
 
 @pytest.fixture(scope="module")
-def library(compiler: probe.Compiler, tmp_path_factory: pytest.TempPathFactory) -> Path:
-    folder = tmp_path_factory.mktemp("calls with space")
-    source = FIXTURES / "calls.cpp"
-    if compiler.msvc_style:
-        path = folder / "calls.dll"
-        arguments = [
-            *compiler.command,
-            *("/nologo", "/LD", "/EHsc", f"/I{FIXTURES}"),
-            *(f"/Fe{path}", f"/Fo{folder / 'calls.obj'}", str(source)),
-        ]
-    else:
-        path = folder / ("libcalls.dylib" if sys.platform == "darwin" else "libcalls.so")
-        shared = ["-dynamiclib"] if sys.platform == "darwin" else ["-shared"]
-        # clang++ on Windows builds a DLL from -shared and rejects -fPIC.
-        if sys.platform != "win32":
-            shared.append("-fPIC")
-        arguments = [*compiler.command, *shared, f"-I{FIXTURES}", "-o", str(path), str(source)]
-    built = subprocess.run(
-        arguments, cwd=folder, capture_output=True, text=True, errors="replace", timeout=300
-    )
-    assert built.returncode == 0, built.stdout + built.stderr
-    return path
+def library(
+    build_library: Callable[[Path, Path], Path], tmp_path_factory: pytest.TempPathFactory
+) -> Path:
+    return build_library(FIXTURES / "calls.cpp", tmp_path_factory.mktemp("calls with space"))
 
 
 def call(library: Path, case: str) -> str:
