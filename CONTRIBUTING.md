@@ -87,6 +87,26 @@ python -m codegen verify sdk --target macos-x86_64 \
 STEAMWORKS_SDK=sdk pytest -m sdk tests/integration/test_codegen_sdk.py
 ```
 
+`bindings` checks one target's layouts the same way, then writes ctypes declarations for it:
+
+```sh
+python -m codegen bindings sdk -o ../steam_flat.py   # this machine's target; takes verify's options
+```
+
+The module holds the SDK's records, enums, typedefs and constants and the signature of each flat
+function ctypes can call safely, and `pysteamsdk._native.bindings.bind()` attaches those to the
+library an initialized session holds. Only layouts the compiler verified are used and nothing is
+guessed: a function is left out if it takes a callback or an object the caller implements, needs
+a type whose size is unknown, or passes a record by value without a `direct` review, and the
+command lists every declaration it leaves out and why. A record with bit-fields keeps its bytes
+as storage rather than fields. Importing the module checks that ctypes lays out each record as
+the compiler did, and refuses a module made for another target. Like the extracted metadata, the
+module is derived from Valve's SDK: `bindings` refuses to write inside the repository and
+`tools/check_sdk_files.py` rejects a generated module, until a redistribution review allows
+otherwise. `tests/codegen/test_bindings_native.py` generates declarations for an invented SDK,
+`tests/codegen/fixtures/gadgets.*`, builds its library and calls every kind of signature through
+them.
+
 Correct layouts do not make a by-value call safe. `tests/codegen/test_abi_calls.py` calls
 invented records shaped like those the flat API passes by value through ctypes and checks what
 the callee receives; the SDK tests check that the shapes still match. The `by_value` entries in

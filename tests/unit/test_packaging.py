@@ -24,6 +24,7 @@ PACKAGE_FILES = (
     "_native/__init__.py",
     "_native/loader.py",
     "_native/lifecycle.py",
+    "_native/bindings.py",
 )
 DECOYS = {
     "sdk/public/steam/steam_api.h": b"".join([b"//====== Copy", b"right Valve Corporation\n"]),
@@ -113,7 +114,10 @@ def test_sdist_contains_only_sources(dist: Path) -> None:
     # wheel.
     assert {"codegen/__main__.py", "codegen/ir.py", "codegen/overrides.toml"} <= names
     assert {"codegen/abi/clang.py", "codegen/abi/probe.py", "codegen/abi/include/stdint.h"} <= names
+    assert {"codegen/bindings.py", "tests/codegen/bindings_child.py"} <= names
     assert {"tests/codegen/fixtures/widgets.json", "tests/codegen/fixtures/layouts.h"} <= names
+    gadgets = {f"tests/codegen/fixtures/gadgets{end}" for end in (".h", "_flat.h", ".json", ".cpp")}
+    assert gadgets <= names
 
 
 def test_distributions_contain_no_sdk_files(dist: Path) -> None:

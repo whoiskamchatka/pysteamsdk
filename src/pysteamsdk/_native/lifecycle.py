@@ -3,6 +3,7 @@ import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from pysteamsdk._native.loader import find_library, load_library
 from pysteamsdk.errors import (
@@ -69,6 +70,34 @@ class Session:
         self._pipe = pipe
         self._user = user
         self._open = True
+        # Calls into Steam made through call() that have not returned yet.
+        self._calls = 0
+        self._idle = threading.Condition(threading.Lock())
+
+    def call(self, name: str, function: Callable[..., Any], *args: object) -> Any:
+        """Run ``function``, a call into Steam named ``name``, unless Steam has been shut down.
+
+        Shutdown waits for the calls in progress, so none of them reaches Steam after it.
+        """
+        with self._idle:
+            if not self._open:
+                raise NotInitializedError(
+                    f"Steam has been shut down; {name} can no longer be called."
+                )
+            self._calls += 1
+        try:
+            return function(*args)
+        finally:
+            with self._idle:
+                self._calls -= 1
+                if not self._calls:
+                    self._idle.notify_all()
+
+    def _close(self) -> None:
+        """Refuse new calls, then wait for those in progress to return."""
+        with self._idle:
+            self._open = False
+            self._idle.wait_for(lambda: not self._calls)
 
     @property
     def closed(self) -> bool:
@@ -139,13 +168,17 @@ class Lifecycle:
                 raise
 
     def shutdown(self) -> None:
-        """Shut Steam down if it is initialized; otherwise do nothing."""
+        """Shut Steam down if it is initialized; otherwise do nothing.
+
+        Calls through Session.call are refused from the start, and any still in Steam are waited
+        for, so none runs against a shut-down library.
+        """
         with self._lock:
             session, self._session = self._session, None
             if session is None:
                 return
             self._shut_down = True
-            session._open = False
+            session._close()
             session._api.shutdown()
 
     def is_initialized(self) -> bool:

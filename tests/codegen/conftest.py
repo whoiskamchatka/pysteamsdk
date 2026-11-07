@@ -8,6 +8,8 @@ format, for tests that start from the IR rather than from an SDK.
 import copy
 import json
 import os
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -187,6 +189,36 @@ def compiler() -> probe.Compiler:
         if os.environ.get("PYSTEAMSDK_REQUIRE_CXX") == "1":
             pytest.fail(str(exc))
         pytest.skip(str(exc))
+
+
+@pytest.fixture(scope="session")
+def build_library(compiler: probe.Compiler) -> Callable[[Path, Path], Path]:
+    """Compiles a C++ source into a shared library in a folder; its headers sit beside it."""
+
+    def build(source: Path, folder: Path) -> Path:
+        if compiler.msvc_style:
+            path = folder / f"{source.stem}.dll"
+            arguments = [
+                *compiler.command,
+                *("/nologo", "/LD", "/EHsc", f"/I{source.parent}"),
+                *(f"/Fe{path}", f"/Fo{folder / (source.stem + '.obj')}", str(source)),
+            ]
+        else:
+            suffix = ".dylib" if sys.platform == "darwin" else ".so"
+            path = folder / f"lib{source.stem}{suffix}"
+            shared = ["-dynamiclib"] if sys.platform == "darwin" else ["-shared"]
+            # clang++ on Windows builds a DLL from -shared and rejects -fPIC.
+            if sys.platform != "win32":
+                shared.append("-fPIC")
+            include = f"-I{source.parent}"
+            arguments = [*compiler.command, *shared, include, "-o", str(path), str(source)]
+        built = subprocess.run(
+            arguments, cwd=folder, capture_output=True, text=True, errors="replace", timeout=300
+        )
+        assert built.returncode == 0, built.stdout + built.stderr
+        return path
+
+    return build
 
 
 @pytest.fixture

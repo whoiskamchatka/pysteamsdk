@@ -51,6 +51,7 @@ def test_import_loads_no_native_library() -> None:
                 setattr(_ctypes, name, record)
 
         import pysteamsdk
+        import pysteamsdk._native.bindings
         import pysteamsdk._native.loader
         import pysteamsdk.errors
 
