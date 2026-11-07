@@ -7,6 +7,7 @@ format, for tests that start from the IR rather than from an SDK.
 
 import copy
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from typing import Any
 import pytest
 
 from codegen import ir
+from codegen.abi import probe
 
 WIDGETS_IR = Path(__file__).parent / "fixtures" / "widgets.json"
 
@@ -174,6 +176,17 @@ HEADERS = {
 }
 
 README = "Widget SDK\n\nv9.99 1st January 2000\nNotes\n"
+
+
+@pytest.fixture(scope="session")
+def compiler() -> probe.Compiler:
+    """The host's C++ compiler. Tests skip without one unless PYSTEAMSDK_REQUIRE_CXX is 1."""
+    try:
+        return probe.find_compiler()
+    except probe.ProbeError as exc:
+        if os.environ.get("PYSTEAMSDK_REQUIRE_CXX") == "1":
+            pytest.fail(str(exc))
+        pytest.skip(str(exc))
 
 
 @pytest.fixture

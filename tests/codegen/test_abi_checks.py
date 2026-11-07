@@ -3,8 +3,8 @@ from dataclasses import replace
 
 import pytest
 
-from codegen import ir
-from codegen.abi.checks import LayoutType, parse
+from codegen import abi, ir
+from codegen.abi.checks import LayoutType, by_value_status, parse
 from codegen.cdecl import parse_type
 from codegen.validate import validate
 
@@ -251,6 +251,66 @@ def test_the_fixture_and_its_layouts_check_out(widgets: ir.Metadata) -> None:
             "invalid-layout",
             "typedef CallID_t: needs both a size and an alignment, or neither",
         ),
+        (
+            lambda m: change_target(m, typedefs=(replace(target(m).typedefs[0], size=12),)),
+            "invalid-layout",
+            "typedef CallID_t: size 12 is not a multiple of the alignment",
+        ),
+        (
+            lambda m: change_record(m, "WidgetPos_t", size=0),
+            "invalid-layout",
+            "WidgetPos_t: size 0 is impossible",
+        ),
+        (
+            lambda m: change_field(
+                m, 1, offset=None, type="unsigned int", bit_offset=32, bit_width=0
+            ),
+            "invalid-layout",
+            "m_flY: a zero-width bit-field has no name",
+        ),
+        # Every use of a type agrees on its size and alignment.
+        (
+            lambda m: change_field(m, 0, size=8),
+            "invalid-layout",
+            "WidgetPos_t.m_flY: float is 4 bytes aligned to 4 here but 8 bytes aligned to 4 in "
+            "WidgetPos_t.m_flX",
+        ),
+        (
+            lambda m: change_field(m, 2, size=6),
+            "invalid-layout",
+            "WidgetPos_t.m_rgubColor: 6 bytes cannot hold 4 equal elements",
+        ),
+        (
+            lambda m: change_field(
+                change_target(
+                    m,
+                    typedefs=(
+                        replace(target(m).typedefs[0], type="function*"),
+                        *target(m).typedefs[1:],
+                    ),
+                ),
+                0,
+                type="void*",
+            ),
+            "invalid-layout",
+            "WidgetPos_t.m_flX: a pointer is 4 bytes aligned to 4 here but 8 bytes aligned to 8 "
+            "in typedef CallID_t",
+        ),
+        (
+            lambda m: change_field(m, 2, type="struct WidgetReady_t", align=4),
+            "invalid-layout",
+            "WidgetPos_t.m_rgubColor: struct WidgetReady_t is 8 bytes, not 4",
+        ),
+        (
+            lambda m: change_field(m, 2, type="struct WidgetReady_t[1]", size=8),
+            "invalid-layout",
+            "WidgetPos_t.m_rgubColor: struct WidgetReady_t is aligned to 4, not 1",
+        ),
+        (
+            lambda m: change_field(m, 0, type="enum EWidgetResult", size=2, align=2),
+            "invalid-layout",
+            "WidgetPos_t.m_flX: enum EWidgetResult is 4 bytes, not 2",
+        ),
     ],
 )
 def test_malformed_layouts_are_errors(
@@ -441,3 +501,77 @@ def test_canonical_layout_types_parse(text: str, parsed: LayoutType) -> None:
 )
 def test_other_spellings_are_not_canonical_layout_types(text: str) -> None:
     assert parse(text) is None
+
+
+REVIEW = ir.ByValue(
+    "WidgetPos_t", ("windows-x86_64",), ("linux-x86_64",), "overrides.toml#/by_value/0"
+)
+
+
+def reviewed(metadata: ir.Metadata, *entries: ir.ByValue) -> ir.Metadata:
+    return replace(returning_pos(metadata), by_value=entries)
+
+
+def review_errors(metadata: ir.Metadata) -> list[str]:
+    return [message for _, code, message in found(metadata) if code == "invalid-by-value"]
+
+
+@pytest.mark.parametrize(
+    ("entries", "message"),
+    [
+        ((replace(REVIEW, direct=("vax",)),), "WidgetPos_t: vax are not targets codegen.abi knows"),
+        (
+            (replace(REVIEW, direct=("linux-x86_64",)),),
+            "linux-x86_64 cannot be both direct and shim",
+        ),
+        (
+            (replace(REVIEW, record="WidgetReady_t"),),
+            "WidgetReady_t: no flat function takes or returns it by value",
+        ),
+        ((REVIEW, REVIEW), "WidgetPos_t: it is reviewed 2 times"),
+    ],
+)
+def test_contradictory_by_value_reviews_are_errors(
+    widgets: ir.Metadata, entries: tuple[ir.ByValue, ...], message: str
+) -> None:
+    assert any(message in error for error in review_errors(reviewed(widgets, *entries)))
+
+
+def test_a_direct_review_the_layouts_contradict_is_an_error(widgets: ir.Metadata) -> None:
+    assert review_errors(reviewed(widgets, REVIEW)) == []
+    # Packed to 4, a 64-bit member at offset 4 is passed in memory by SysV but not by ctypes.
+    fields = (
+        ir.FieldLayout("m_n", "int", 4, 4, offset=0),
+        ir.FieldLayout("m_ul", "unsigned long long", 8, 8, offset=4),
+    )
+    packed = change_record(widgets, "WidgetPos_t", fields=fields)
+    direct = replace(REVIEW, direct=("windows-x86_64", "linux-x86_64"), shim=())
+    assert review_errors(reviewed(packed, direct)) == [
+        "by_value WidgetPos_t: it is direct on linux-x86_64, but a misaligned member makes SysV "
+        "pass it in memory, where ctypes uses registers"
+    ]
+    opaque = change_record(
+        widgets, "WidgetPos_t", "windows-x86_64", status="opaque", size=None, align=None, fields=()
+    )
+    assert review_errors(reviewed(opaque, REVIEW)) == [
+        "by_value WidgetPos_t: it is direct on windows-x86_64, where it has no complete layout"
+    ]
+
+
+def test_records_passed_by_value_are_never_direct_without_review(widgets: ir.Metadata) -> None:
+    unreviewed = returning_pos(widgets)
+    assert (
+        "warning",
+        "unreviewed-by-value",
+        "WidgetPos_t is passed by value, but no by_value override says how ctypes may pass it, "
+        "so it is unverified on every target",
+    ) in found(unreviewed)
+    assert {by_value_status(unreviewed, "WidgetPos_t", t) for t in abi.TARGETS} == {"unverified"}
+    metadata = reviewed(widgets, REVIEW)
+    assert [by_value_status(metadata, "WidgetPos_t", t) for t in abi.TARGETS] == [
+        "direct",
+        "shim",
+        "unverified",
+        "unverified",
+    ]
+    assert "unreviewed-by-value" not in [code for _, code, _ in found(metadata)]

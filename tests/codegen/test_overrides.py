@@ -60,12 +60,22 @@ def mismatches(metadata: ir.Metadata) -> list[str]:
     return [issue.message for issue in metadata.issues if issue.code == "override-mismatch"]
 
 
+BY_VALUE = """
+[[by_value]]
+record = "WidgetOwner_t"
+direct = ["windows-x86_64"]
+shim = ["linux-x86_64"]
+reason = "invented"
+"""
+
+
 def test_the_reviewed_overrides_file_is_well_formed() -> None:
     reviewed = load(DEFAULT.read_text(encoding="utf-8"))
     sources = [
         *(entry.source for entry in reviewed.interface_versions),
         *(entry.source for entry in reviewed.shared_callbacks),
         *(entry.source for entry in reviewed.external_types),
+        *(entry.source for entry in reviewed.by_value),
     ]
     assert sources
     assert all(source.startswith("overrides.toml#/") for source in sources)
@@ -89,6 +99,9 @@ def test_the_reviewed_overrides_file_is_well_formed() -> None:
         (SHARED_CALLBACK.replace("701", "true"), "'callback_id' must be an integer"),
         (SHARED_CALLBACK.replace('"WidgetGone_t"', "1"), "'structs' must list struct names"),
         (EXTERNAL_TYPES.replace('"class"', '"enum"'), "'declaration' must be one of class"),
+        (BY_VALUE.replace('["windows-x86_64"]', '"windows-x86_64"'), "'direct' must be an array"),
+        (BY_VALUE.replace('["linux-x86_64"]', "[64]"), "'shim' must list targets"),
+        (BY_VALUE + BY_VALUE, "'WidgetOwner_t' is already overridden"),
     ],
 )
 def test_malformed_overrides_are_rejected(text: str, problem: str) -> None:
@@ -258,3 +271,37 @@ def test_an_external_type_steam_api_json_now_describes_is_an_error(
     metadata = extract(make_sdk(api, headers=HEADERS), load(EXTERNAL_TYPES)).metadata
     (issue,) = [i for i in metadata.issues if i.code == "duplicate-declaration"]
     assert "overrides.toml#/external_type/0" in issue.message
+
+
+def returning_owner(api: dict[str, Any], flat_header: str) -> tuple[dict[str, Any], str]:
+    """The invented SDK with GetOwner returning WidgetOwner_t by value from its flat function."""
+    del api["interfaces"][0]["methods"][0]["returntype_flat"]
+    flat = flat_header.replace(
+        "S_API uint64_owner WidgetAPI_IWidgets_GetOwner",
+        "S_API WidgetOwner_t WidgetAPI_IWidgets_GetOwner",
+    )
+    return api, flat
+
+
+def test_by_value_records_are_classified_by_review(
+    make_sdk: MakeSdk, api: dict[str, Any], flat_header: str
+) -> None:
+    api, flat = returning_owner(api, flat_header)
+    without = extract(make_sdk(api, flat=flat, name="without")).metadata
+    assert without.by_value == ()
+    assert ("warning", "unreviewed-by-value") in codes(without)
+    metadata = extract(make_sdk(api, flat=flat, name="with"), load(BY_VALUE)).metadata
+    assert metadata.by_value == (
+        ir.ByValue(
+            "WidgetOwner_t", ("windows-x86_64",), ("linux-x86_64",), "overrides.toml#/by_value/0"
+        ),
+    )
+    assert ("warning", "unreviewed-by-value") not in codes(metadata)
+    assert not [issue for issue in metadata.issues if issue.severity == "error"]
+
+
+def test_a_by_value_review_for_a_record_no_longer_passed_is_an_error(make_sdk: MakeSdk) -> None:
+    # The invented SDK's flat functions pass WidgetOwner_t as uint64_owner.
+    metadata = extract(make_sdk(), load(BY_VALUE)).metadata
+    assert metadata.by_value == ()
+    assert mismatches(metadata) == ["no flat function takes or returns WidgetOwner_t by value"]

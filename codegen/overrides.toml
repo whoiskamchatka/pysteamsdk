@@ -2,8 +2,8 @@
 #
 # Each entry names its target and says why it exists. The extractor checks every entry against
 # the SDK and reports it as an error, without applying it, once its target no longer looks as
-# described. Add an entry only with evidence from the SDK itself, and never to describe a struct
-# layout: layouts come from compiling the headers.
+# described. Add an entry only with evidence from the SDK itself, or for by_value from the call
+# tests, and never to describe a struct layout: layouts come from compiling the headers.
 
 [[interface_version]]
 interface = "ISteamClient"
@@ -92,4 +92,59 @@ declaration = "incomplete"
 header = "isteamnetworkingsockets.h"
 reason = """
 Only forward-declared: no SDK header defines it. ReceivedP2PCustomSignal takes it by pointer.
+"""
+
+# How ctypes may pass each record a flat function takes or returns by value. A target is direct
+# only where tests/codegen/test_abi_calls.py has shown ctypes passing a record of the same shape
+# as the native compiler does, and shim where it has shown that ctypes does not. Every other
+# target is unverified, so no binding may pass the record directly there. The SDK tests check
+# that each fixture record still has the shape of the SDK record it stands for.
+
+[[by_value]]
+record = "InputAnalogActionData_t"
+direct = ["windows-x86_64", "linux-x86_64"]
+shim = []
+reason = """
+Returned by value: 13 bytes packed to 1, an enum, two floats and a bool. ctypes returns Stick
+from tests/codegen/fixtures/calls.h, of the same shape, as MSVC 19.44 and GCC 15.2 do.
+"""
+
+[[by_value]]
+record = "InputDigitalActionData_t"
+direct = ["windows-x86_64", "linux-x86_64"]
+shim = []
+reason = """
+Returned by value: two bools in 2 bytes. ctypes returns Button, of the same shape, as MSVC
+19.44 and GCC 15.2 do.
+"""
+
+[[by_value]]
+record = "InputMotionData_t"
+direct = ["windows-x86_64", "linux-x86_64"]
+shim = []
+reason = """
+Returned by value: ten floats in 40 bytes packed to 1, which both ABIs return through a hidden
+pointer. ctypes returns Motion, of the same shape, as MSVC 19.44 and GCC 15.2 do.
+"""
+
+[[by_value]]
+record = "SteamIPAddress_t"
+direct = ["windows-x86_64", "linux-x86_64"]
+shim = []
+reason = """
+Taken and returned by value: a 16-byte union and an enum in 20 bytes packed to 1, which both
+ABIs pass in memory. ctypes passes and returns Address, of the same shape, as MSVC 19.44 and
+GCC 15.2 do.
+"""
+
+[[by_value]]
+record = "SteamPartyBeaconLocation_t"
+direct = ["windows-x86_64"]
+shim = ["linux-x86_64"]
+reason = """
+Taken by value: an enum and a uint64. Callbacks are packed to 8 on Windows, where ctypes passes
+Location, of the same shape, as MSVC 19.44 does. Off Windows they are packed to 4, which puts
+the uint64 at offset 4: SysV then passes the 12 bytes in memory, ctypes passes them in
+registers, and GCC 15.2's callee reads garbage. macOS x86-64 follows the same ABI but is
+unverified until a Mac runs the test.
 """

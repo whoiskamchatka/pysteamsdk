@@ -276,6 +276,7 @@ def test_the_layouts_check_out_and_round_trip(layouts: dict[str, ir.TargetLayout
         typedefs=(),
         external_types=(),
         shared_callbacks=(),
+        by_value=(),
         exports=(),
         abi=ir.Abi(version(), tuple(layouts.values())),
         issues=(),

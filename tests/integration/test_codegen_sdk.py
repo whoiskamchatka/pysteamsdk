@@ -2,14 +2,16 @@
 
 import os
 from collections import Counter
+from pathlib import Path
 
 import pytest
 
 from codegen import ir
-from codegen.abi import TARGETS
-from codegen.extract import Extraction, extract
+from codegen.abi import TARGETS, Roots, probe
+from codegen.abi.checks import by_value_records, parse
+from codegen.extract import Extraction, extract, layout_source
 from codegen.extract.overrides import DEFAULT, load
-from codegen.inventory import counts, layout_counts
+from codegen.inventory import by_value_counts, counts, layout_counts
 from codegen.validate import validate
 
 SDK = os.environ.get("STEAMWORKS_SDK", "")
@@ -61,6 +63,24 @@ LAYOUTS_165 = {
     "records_differing": 97,
     "enums_differing": 110,
 }
+# As codegen/overrides.toml classifies the records passed by value; macOS is unverified.
+BY_VALUE_165 = {
+    "by_value_records": 5,
+    **{f"{target}_{kind}": 0 for target in TARGETS for kind in ("direct", "shim", "unverified")},
+    "windows-x86_64_direct": 5,
+    "linux-x86_64_direct": 4,
+    "linux-x86_64_shim": 1,
+    "macos-x86_64_unverified": 5,
+    "macos-arm64_unverified": 5,
+}
+# The records in tests/codegen/fixtures/calls.h whose calls stand for the SDK's by-value ones.
+LOOK_ALIKES = {
+    "Address": "SteamIPAddress_t",
+    "Button": "InputDigitalActionData_t",
+    "Location": "SteamPartyBeaconLocation_t",
+    "Motion": "InputMotionData_t",
+    "Stick": "InputAnalogActionData_t",
+}
 
 
 @pytest.fixture(scope="module")
@@ -74,6 +94,7 @@ def extraction() -> Extraction:
 def test_sdk_165_inventory(extraction: Extraction) -> None:
     assert counts(extraction) == SDK_165
     assert layout_counts(extraction.metadata) == LAYOUTS_165
+    assert by_value_counts(extraction.metadata) == BY_VALUE_165
 
 
 def test_sdk_165_with_the_reviewed_overrides_has_only_layout_warnings(
@@ -113,8 +134,103 @@ def test_sdk_165_without_overrides_has_only_the_warnings_they_resolve(
     issues = Counter((i.severity, i.code) for i in extract(SDK).metadata.issues)
     assert {key: count for key, count in issues.items() if key[0] != "note"} == {
         ("warning", "shared-callback-id"): 1,
+        ("warning", "unreviewed-by-value"): 5,
         ("warning", "unresolved-type"): 8,
     }
+
+
+def test_sdk_165_layouts_match_the_native_compiler(extraction: Extraction) -> None:
+    # Checked natively with MSVC 19.44 on Windows and GCC 15.2 on Linux. Six anonymous unions are
+    # derived from what the compiler measured. Three records are not trivially copyable and keep
+    # padding, so a member hidden in it cannot be ruled out without undefined behavior.
+    target = probe.host_target()
+    if target is None:
+        pytest.skip("this machine is not one of the targets")
+    try:
+        compiler = probe.find_compiler()
+    except probe.ProbeError as exc:
+        pytest.skip(str(exc))
+    assert extraction.metadata.abi is not None
+    (layout,) = [item for item in extraction.metadata.abi.targets if item.target == target]
+    report = probe.verify(layout, *layout_source(SDK), compiler)
+    assert report.failures == ()
+    found = {
+        group: Counter(items.values()) for group, items in probe.statuses(report, layout).items()
+    }
+    if "clang" in report.identity.compiler:
+        # Clang reads no value bits, so far more records are only partly verified.
+        assert "mismatched" not in found["record"]
+    else:
+        assert found == {
+            "record": {"verified": 232, "derived": 6, "partly verified": 3, "opaque": 5},
+            "enum": {"verified": 117},
+            "typedef": {"verified": 72},
+        }
+        assert len(report.gaps) == 3
+    # Five records are passed by value. C++ passes none differently from C, but off Windows a
+    # callback packed to 4 leaves a 64-bit member misaligned, which ctypes passes wrongly.
+    records = {item.name: item for item in layout.records}
+    uses: dict[str, set[str]] = {}
+    for _, verb, name in by_value_records(extraction.metadata):
+        uses.setdefault(name, set()).add(verb)
+    assert len(uses) == 5
+    risky = [
+        name
+        for name, verbs in uses.items()
+        if probe.risks(target, records[name], report.facts[name], verbs)
+    ]
+    assert len(risky) == {"linux-x86_64": 1, "macos-x86_64": 1}.get(target, 0)
+
+
+def test_the_call_tests_stand_for_every_record_passed_by_value(extraction: Extraction) -> None:
+    clang = pytest.importorskip("codegen.abi.clang", reason="needs the codegen dependency group")
+    fixtures = Path(__file__).parents[1] / "codegen" / "fixtures"
+    roots = Roots(records=tuple(LOOK_ALIKES))
+    found, issues = clang.lay_out('#include "calls.h"\n', [fixtures], roots, TARGETS)
+    assert issues == []
+    assert extraction.metadata.abi is not None
+    assert {name for _, _, name in by_value_records(extraction.metadata)} == set(
+        LOOK_ALIKES.values()
+    )
+    for ours, theirs in zip(found.targets, extraction.metadata.abi.targets, strict=True):
+        assert ours.target == theirs.target
+        mine = {item.name: item for item in ours.records}
+        sdk = {item.name: item for item in theirs.records}
+        for name, record in LOOK_ALIKES.items():
+            assert shape(mine[name], mine) == shape(sdk[record], sdk), (ours.target, name)
+
+
+def shape(record: ir.RecordLayout, records: dict[str, ir.RecordLayout]) -> object:
+    """What passing a record by value depends on: its size and alignment, and where each scalar
+    sits and whether it is an integer, a pointer or which floating-point type."""
+    return record.size, record.align, sorted(_scalars(record, records, 0))
+
+
+def _scalars(
+    record: ir.RecordLayout, records: dict[str, ir.RecordLayout], start: int
+) -> list[tuple[int, int, str]]:
+    found = []
+    for item in record.fields:
+        offset = start + (item.offset or 0)
+        if item.record is not None:
+            found += _scalars(item.record, records, offset)
+            continue
+        parsed = parse(item.type)
+        assert parsed is not None
+        assert item.bit_width is None
+        element = item.size // parsed.count
+        reference = parsed.by_value()
+        for index in range(parsed.count):
+            at = offset + index * element
+            if reference is not None and reference[0] != "enum":
+                found += _scalars(records[reference[1]], records, at)
+            elif parsed.pointers:
+                found.append((at, element, "pointer"))
+            elif parsed.base in ("float", "double", "long double"):
+                found.append((at, element, parsed.base))
+            else:
+                found.append((at, element, "integer"))
+    return found
 
 
 def test_sdk_extraction_is_deterministic(extraction: Extraction) -> None:

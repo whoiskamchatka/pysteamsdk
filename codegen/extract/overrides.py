@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from codegen import ir
+from codegen.abi.checks import by_value_records
 from codegen.extract.api_json import MetadataError
 from codegen.extract.headers import HeaderScan
 
@@ -23,6 +24,7 @@ _SCHEMAS: dict[str, dict[str, type]] = {
     "interface_version": {"interface": str, "macro": str, "version": str, "reason": str},
     "shared_callback": {"callback_id": int, "structs": list, "reason": str},
     "external_type": {"name": str, "declaration": str, "header": str, "reason": str},
+    "by_value": {"record": str, "direct": list, "shim": list, "reason": str},
 }
 _KINDS = {str: "a string", int: "an integer", list: "an array"}
 _DECLARATIONS: tuple[ir.Declaration, ...] = typing.get_args(ir.Declaration)
@@ -42,6 +44,7 @@ class Overrides:
     interface_versions: tuple[InterfaceVersion, ...] = ()
     shared_callbacks: tuple[ir.SharedCallback, ...] = ()
     external_types: tuple[ir.ExternalType, ...] = ()
+    by_value: tuple[ir.ByValue, ...] = ()
 
 
 def load(text: str, name: str = DEFAULT.name) -> Overrides:
@@ -64,6 +67,7 @@ def load(text: str, name: str = DEFAULT.name) -> Overrides:
         ("interface_version", "interface"),
         ("shared_callback", "callback_id"),
         ("external_type", "name"),
+        ("by_value", "record"),
     ):
         seen: dict[object, str] = {}
         for source, entry in tables.get(table, []):
@@ -88,6 +92,10 @@ def load(text: str, name: str = DEFAULT.name) -> Overrides:
             ir.ExternalType(e["name"], e["declaration"], e["header"], source)
             for source, e in tables["external_type"]
         ),
+        tuple(
+            ir.ByValue(e["record"], tuple(e["direct"]), tuple(e["shim"]), source)
+            for source, e in tables["by_value"]
+        ),
     )
 
 
@@ -101,9 +109,10 @@ def _entry_problems(entry: dict[str, object], schema: dict[str, type]) -> list[s
             problems.append(f"{key!r} must be {_KINDS[kind]}")
     if isinstance(entry.get("reason"), str) and not str(entry["reason"]).strip():
         problems.append("'reason' must say why the override exists")
-    structs = entry.get("structs")
-    if isinstance(structs, list) and not all(isinstance(item, str) for item in structs):
-        problems.append("'structs' must list struct names")
+    for key, what in (("structs", "struct names"), ("direct", "targets"), ("shim", "targets")):
+        items = entry.get(key)
+        if isinstance(items, list) and not all(isinstance(item, str) for item in items):
+            problems.append(f"{key!r} must list {what}")
     declaration = entry.get("declaration")
     if isinstance(declaration, str) and declaration not in _DECLARATIONS:
         problems.append(f"'declaration' must be one of {', '.join(_DECLARATIONS)}")
@@ -144,7 +153,18 @@ def apply(
         external_types=tuple(sorted(external_types, key=lambda item: item.name)),
         shared_callbacks=tuple(sorted(overrides.shared_callbacks, key=lambda i: i.callback_id)),
     )
-    return applied, issues
+    # A record the flat API no longer passes by value needs no review; one it does is checked
+    # against its layouts by codegen.abi.checks.
+    passed = {name for _, _, name in by_value_records(applied)}
+    reviews = []
+    for review in overrides.by_value:
+        if review.record in passed:
+            reviews.append(review)
+        else:
+            message = f"no flat function takes or returns {review.record} by value"
+            issues.append(ir.Issue("error", "override-mismatch", message, review.source))
+    reviews.sort(key=lambda item: item.record)
+    return dataclasses.replace(applied, by_value=tuple(reviews)), issues
 
 
 def _version_problem(

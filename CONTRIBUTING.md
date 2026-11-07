@@ -57,6 +57,43 @@ computes the same layouts. Pick targets with `--targets windows-x86_64,linux-x86
 `--no-layouts` to skip libclang. A record the layouts cannot describe is marked opaque or
 unsupported instead of guessed, and a header that does not compile is an error.
 
+`verify` checks one target's layouts against a native C++ compiler, which builds and runs a
+probe program that includes the same headers with the compiler's own system headers:
+
+```sh
+python -m codegen verify sdk                          # this machine's target, extracted now
+python -m codegen verify sdk --metadata ../metadata.json --only CSteamID,CGameID
+```
+
+It uses `--cxx`, else `$CXX`, else `cl` on Windows (run it from a Visual Studio developer prompt)
+and `c++` elsewhere. Each record's size, alignment, members, bit-field positions and value bits,
+and each enum's and typedef's type, are compared, and any difference fails with both values.
+Value bits come from the compiler's padding-clearing builtin (MSVC and GCC have one, Clang has
+not): a value bit no extracted member covers means a member is missing. An anonymous union's size
+and alignment are derived from what the compiler measured. Whatever cannot be checked, and why,
+is listed rather than passed. The probe has to run, so it verifies the target the compiler builds
+for, normally the host's; pass `--target` and flags such as `--cxx-flag=-arch --cxx-flag=x86_64`
+for another one the host can run. The tests in `tests/codegen` run the probe on invented headers
+whenever a C++ compiler is found; CI sets `PYSTEAMSDK_REQUIRE_CXX=1` so that a missing compiler
+fails.
+
+macOS layouts of the real SDK are verified only on a Mac you are licensed to use the SDK on,
+with the Xcode command line tools and the SDK in `sdk/`:
+
+```sh
+python -m codegen verify sdk                                   # arm64 on Apple silicon
+python -m codegen verify sdk --target macos-x86_64 \
+    --cxx-flag=-arch --cxx-flag=x86_64                         # x86_64; needs Rosetta 2
+STEAMWORKS_SDK=sdk pytest -m sdk tests/integration/test_codegen_sdk.py
+```
+
+Correct layouts do not make a by-value call safe. `tests/codegen/test_abi_calls.py` calls
+invented records shaped like those the flat API passes by value through ctypes and checks what
+the callee receives; the SDK tests check that the shapes still match. The `by_value` entries in
+`codegen/overrides.toml` record the result per target: `direct` where ctypes was shown to pass
+the record correctly, `shim` where it was shown not to. Any other target is unverified, and a
+binding generator must not pass the record by value there either.
+
 `codegen/overrides.toml` records reviewed corrections where the SDK's metadata is incomplete,
 such as a missing interface version or types `steam_api.json` uses without describing. Each
 entry needs SDK evidence and a reason, and is checked against the SDK on every run: when a new
