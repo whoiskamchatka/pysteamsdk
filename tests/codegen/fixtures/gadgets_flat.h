@@ -53,6 +53,9 @@ S_API bool GadgetAPI_IGadgets_Join( IGadgets* self, GadgetJoined_t * pJoined );
 S_API bool GadgetAPI_IGadgets_Describe( IGadgets* self, GadgetValue_t * pValue );
 S_API bool GadgetAPI_IGadgets_GetAddress( IGadgets* self, GadgetAddress_t * pAddress );
 S_API int32 GadgetAPI_IGadgets_CountNames( IGadgets* self, const char ** ppchNames, int32 nNames );
+S_API void GadgetAPI_IGadgets_SetNotice( IGadgets* self, GadgetNotice_t pfnNotice );
+S_API int32 GadgetAPI_IGadgets_Notify( IGadgets* self, int32 nTimes );
+S_API uint32 GadgetAPI_IGadgets_ReadValue( IGadgets* self, const GadgetValue_t * pValue );
 
 // IGadgetBox
 S_API IGadgetBox *GadgetAPI_GadgetBox_v001();
@@ -65,4 +68,8 @@ S_API void GadgetAPI_IGadgetListener_OnDone( IGadgetListener* self, int32 code )
 // GadgetAddress_t
 S_API void GadgetAPI_GadgetAddress_t_Clear( GadgetAddress_t* self );
 S_API bool GadgetAPI_GadgetAddress_t_IsLoopback( GadgetAddress_t* self );
+
+// GadgetValue_t
+S_API void GadgetAPI_GadgetValue_t_SetText( GadgetValue_t* self, const char * pchText );
+S_API void GadgetAPI_GadgetValue_t_SetData( GadgetValue_t* self, void * pData );
 #endif

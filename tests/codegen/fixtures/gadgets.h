@@ -56,7 +56,28 @@ struct GadgetReady_t
 	EGadgetResult m_eResult;
 	uint64 m_ulId;
 };
+
+// The manual dispatch message and call completion, named and laid out as in the SDK, since
+// pysteamsdk's runtime looks for them by name.
+struct CallbackMsg_t
+{
+	int32 m_hSteamUser;
+	int m_iCallback;
+	uint8 *m_pubParam;
+	int m_cubParam;
+};
+
+struct SteamAPICallCompleted_t
+{
+	enum { k_iCallback = 9100 };
+	GadgetCall_t m_hAsyncCall;
+	int m_iCallback;
+	uint32 m_cubParam;
+};
 #pragma pack( pop )
+
+// Called back from GadgetAPI_IGadgets_Notify, on the thread that calls it.
+typedef void ( *GadgetNotice_t )( int32 nCode, const GadgetReady_t *pReady, const char *pchText );
 
 #pragma pack( push, 1 )
 // A C++ ID wrapper with private bit-fields, as CSteamID is. Flat functions pass it as a uint64.

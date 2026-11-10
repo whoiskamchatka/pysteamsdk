@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from codegen import ir
+from codegen.cdecl import parse_type
 from codegen.extract import MetadataError, extract
 from codegen.extract.overrides import DEFAULT, load
 
@@ -68,6 +69,20 @@ shim = ["linux-x86_64"]
 reason = "invented"
 """
 
+CALLBACK = """
+[[callback]]
+function = "WidgetAPI_IWidgets_SetHook"
+param = "pfn"
+reason = "invented"
+"""
+RETAINED = """
+[[retained_pointer]]
+function = "WidgetAPI_IWidgets_Fetch"
+param = "pch"
+holder = "record"
+reason = "invented"
+"""
+
 
 def test_the_reviewed_overrides_file_is_well_formed() -> None:
     reviewed = load(DEFAULT.read_text(encoding="utf-8"))
@@ -102,6 +117,8 @@ def test_the_reviewed_overrides_file_is_well_formed() -> None:
         (BY_VALUE.replace('["windows-x86_64"]', '"windows-x86_64"'), "'direct' must be an array"),
         (BY_VALUE.replace('["linux-x86_64"]', "[64]"), "'shim' must list targets"),
         (BY_VALUE + BY_VALUE, "'WidgetOwner_t' is already overridden"),
+        (CALLBACK + CALLBACK, "'WidgetAPI_IWidgets_SetHook.pfn' is already overridden"),
+        (RETAINED.replace('"record"', '"forever"'), "'holder' must be one of record, none"),
     ],
 )
 def test_malformed_overrides_are_rejected(text: str, problem: str) -> None:
@@ -305,3 +322,60 @@ def test_a_by_value_review_for_a_record_no_longer_passed_is_an_error(make_sdk: M
     metadata = extract(make_sdk(), load(BY_VALUE)).metadata
     assert metadata.by_value == ()
     assert mismatches(metadata) == ["no flat function takes or returns WidgetOwner_t by value"]
+
+
+def test_a_callback_review_takes_its_signature_from_the_header(make_sdk: MakeSdk) -> None:
+    metadata = extract(make_sdk(), load(CALLBACK)).metadata
+    assert metadata.hooks == (
+        ir.Hook(
+            "WidgetAPI_IWidgets_SetHook",
+            "pfn",
+            "WidgetHook_t",
+            parse_type("void"),
+            (parse_type("WidgetReady_t *"),),
+            "overrides.toml#/callback/0",
+        ),
+    )
+    assert not [issue for issue in metadata.issues if issue.severity == "error"]
+
+
+@pytest.mark.parametrize(
+    ("text", "header", "problem"),
+    [
+        (
+            CALLBACK.replace("SetHook", "Gone"),
+            "",
+            "WidgetAPI_IWidgets_Gone is not a flat function in steam_api.json",
+        ),
+        (
+            CALLBACK.replace('"pfn"', '"pfnOther"'),
+            "",
+            "WidgetAPI_IWidgets_SetHook has no parameter",
+        ),
+        (
+            CALLBACK,
+            "( *WidgetHook_t )( int )",
+            "widget_types.h declares WidgetHook_t otherwise than steam_api.json",
+        ),
+        (CALLBACK, "( *WidgetHookGone_t )( WidgetReady_t * )", "no header declares WidgetHook_t"),
+        (
+            RETAINED,
+            "",
+            "WidgetAPI_IWidgets_Fetch is no record's method, so no record can hold pch",
+        ),
+        (
+            RETAINED.replace('"pch"', '"cch"'),
+            "",
+            "WidgetAPI_IWidgets_Fetch cch is int, not a pointer",
+        ),
+    ],
+)
+def test_reviewed_parameters_must_still_match_the_sdk(
+    make_sdk: MakeSdk, headers: dict[str, str], text: str, header: str, problem: str
+) -> None:
+    if header:
+        types = headers["widget_types.h"]
+        headers["widget_types.h"] = types.replace("( *WidgetHook_t )( WidgetReady_t * )", header)
+    metadata = extract(make_sdk(headers=headers), load(text)).metadata
+    assert (metadata.hooks, metadata.retained) == ((), ())
+    assert [message for message in mismatches(metadata) if problem in message]

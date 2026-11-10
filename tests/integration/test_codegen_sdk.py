@@ -45,7 +45,7 @@ SDK_165 = {
     "unevaluated_constants": 0,
     "typedefs_json": 69,
     "typedefs_flat": 2,
-    "external_types": 8,
+    "external_types": 9,
     "shared_callbacks": 1,
     "other_exports": 48,
     "version_macros": 30,
@@ -55,8 +55,8 @@ LAYOUTS_165 = {
         f"{target}_{kind}": count
         for target in TARGETS
         for kind, count in (
-            ("records", 246),
-            ("complete", 241),
+            ("records", 247),
+            ("complete", 242),
             ("opaque", 5),
             ("unsupported", 0),
             ("enums", 117),
@@ -65,7 +65,7 @@ LAYOUTS_165 = {
     },
     # Callback structs are packed to 8 bytes on Windows and to 4 elsewhere, and enums without a
     # fixed type are int on Windows and unsigned int elsewhere unless a value is negative.
-    "records_differing": 97,
+    "records_differing": 98,
     "enums_differing": 110,
 }
 # As codegen/overrides.toml classifies the records passed by value; macOS is unverified.
@@ -80,17 +80,19 @@ BY_VALUE_165 = {
 }
 # What codegen.bindings leaves out of SDK 1.65 on every target, by reason, besides records passed
 # by value, which follow the by_value reviews: 48 exports without a signature, 24 functions of or
-# taking the matchmaking responses the caller implements, 10 functions and 10 typedefs that are
-# callbacks, 9 functions and 5 records the SDK never defines, and 9 game server accessors.
+# taking the matchmaking responses the caller implements, SetDebugOutputFunction and the two
+# callback types no review covers, 9 functions and 5 records the SDK never defines, 9 game server
+# accessors, and SetPtr, whose pointer Steam keeps.
 SKIPPED_165 = {
     "no-signature": 48,
     "callback-object": 24,
-    "callback": 20,
+    "callback": 3,
     "opaque": 14,
     "game-server": 9,
+    "retained-pointer": 1,
 }
 # Flat functions generated where the compiler and the by_value reviews were checked natively.
-GENERATED_165 = {"windows-x86_64": 944, "linux-x86_64": 943}
+GENERATED_165 = {"windows-x86_64": 952, "linux-x86_64": 951}
 # The records in tests/codegen/fixtures/calls.h whose calls stand for the SDK's by-value ones.
 LOOK_ALIKES = {
     "Address": "SteamIPAddress_t",
@@ -180,7 +182,7 @@ def test_sdk_165_layouts_match_the_native_compiler(extraction: Extraction) -> No
         assert "mismatched" not in found["record"]
     else:
         assert found == {
-            "record": {"verified": 232, "derived": 6, "partly verified": 3, "opaque": 5},
+            "record": {"verified": 233, "derived": 6, "partly verified": 3, "opaque": 5},
             "enum": {"verified": 117},
             "typedef": {"verified": 72},
         }
@@ -232,7 +234,7 @@ def test_sdk_165_declarations_cover_the_flat_api_and_bind(
     if target in GENERATED_165:
         assert len(generated.generated["function"]) == GENERATED_165[target]
     assert len(generated.generated["accessor"]) == 25
-    assert len(generated.generated["record"]) == 241
+    assert len(generated.generated["record"]) == 242
     declarations = tmp_path / "declarations.py"
     declarations.write_text(generated.text, encoding="utf-8")
     name, folder = loader._target(*loader._host())

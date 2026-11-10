@@ -71,6 +71,16 @@ analogAction member. The union's real layout must come from the header.
 """
 
 [[external_type]]
+name = "CallbackMsg_t"
+declaration = "struct"
+header = "steam_api_internal.h"
+reason = """
+The message SteamAPI_ManualDispatch_GetNextCallback fills, which steam_api.json does not
+describe. It is packed as callbacks are, so its layout differs between Windows and the rest.
+pysteamsdk's runtime reads it to dispatch callbacks.
+"""
+
+[[external_type]]
 name = "SteamDatagramRelayAuthTicket"
 declaration = "incomplete"
 header = "steamnetworkingtypes.h"
@@ -147,4 +157,103 @@ Location, of the same shape, as MSVC 19.44 does. Off Windows they are packed to 
 the uint64 at offset 4: SysV then passes the 12 bytes in memory, ctypes passes them in
 registers, and GCC 15.2's callee reads garbage. macOS x86-64 follows the same ABI but is
 unverified until a Mac runs the test.
+"""
+
+# Function pointer parameters Steam may call back. Each needs header evidence that Steam calls
+# the function on the thread of a call made into Steam, where a Python function can safely run.
+# The signature is read from the typedef's declaration. SetDebugOutputFunction is left out:
+# isteamnetworkingutils.h says Steam calls it "from a service thread, while we own a mutex".
+
+[[callback]]
+function = "SteamAPI_ISteamClient_SetWarningMessageHook"
+param = "pFunction"
+reason = """
+isteamclient.h: "callbacks will occur directly after the API function is called that generated
+the warning or message", so on the thread that made that call.
+"""
+
+[[callback]]
+function = "SteamAPI_ISteamUtils_SetWarningMessageHook"
+param = "pFunction"
+reason = """
+isteamutils.h: "callbacks will occur directly after the API function is called that generated
+the warning or message", so on the thread that made that call.
+"""
+
+[[callback]]
+function = "SteamAPI_ISteamInput_EnableActionEventCallbacks"
+param = "pCallback"
+reason = """
+isteaminput.h: "this is called within either SteamInput()->RunFrame or by SteamAPI_RunCallbacks",
+and pysteamsdk dispatches manually, so only ISteamInput's RunFrame calls it.
+"""
+
+[[callback]]
+function = "SteamAPI_ISteamNetworkingUtils_SetGlobalCallback_SteamNetConnectionStatusChanged"
+param = "fnCallback"
+reason = """
+isteamnetworkingsockets.h: RunCallbacks will "Invoke all callback functions queued for this
+interface", so Steam queues these calls for the thread that runs them.
+"""
+
+[[callback]]
+function = "SteamAPI_ISteamNetworkingUtils_SetGlobalCallback_SteamNetAuthenticationStatusChanged"
+param = "fnCallback"
+reason = """
+isteamnetworkingsockets.h: RunCallbacks will "Invoke all callback functions queued for this
+interface", so Steam queues these calls for the thread that runs them.
+"""
+
+[[callback]]
+function = "SteamAPI_ISteamNetworkingUtils_SetGlobalCallback_SteamRelayNetworkStatusChanged"
+param = "fnCallback"
+reason = """
+isteamnetworkingsockets.h: RunCallbacks will "Invoke all callback functions queued for this
+interface", so Steam queues these calls for the thread that runs them.
+"""
+
+[[callback]]
+function = "SteamAPI_ISteamNetworkingUtils_SetGlobalCallback_FakeIPResult"
+param = "fnCallback"
+reason = """
+isteamnetworkingsockets.h: RunCallbacks will "Invoke all callback functions queued for this
+interface", so Steam queues these calls for the thread that runs them.
+"""
+
+[[callback]]
+function = "SteamAPI_ISteamNetworkingUtils_SetGlobalCallback_MessagesSessionRequest"
+param = "fnCallback"
+reason = """
+isteamnetworkingsockets.h: RunCallbacks will "Invoke all callback functions queued for this
+interface", so Steam queues these calls for the thread that runs them.
+"""
+
+[[callback]]
+function = "SteamAPI_ISteamNetworkingUtils_SetGlobalCallback_MessagesSessionFailed"
+param = "fnCallback"
+reason = """
+isteamnetworkingsockets.h: RunCallbacks will "Invoke all callback functions queued for this
+interface", so Steam queues these calls for the thread that runs them.
+"""
+
+# Pointer parameters a flat function keeps after it returns. With holder "record" a binding
+# keeps the pointed-to object alive as long as the record the function stores the pointer in;
+# with "none" Steam may use it after any such object is gone, so the function is not bound.
+
+[[retained_pointer]]
+function = "SteamAPI_SteamNetworkingConfigValue_t_SetString"
+param = "data"
+holder = "record"
+reason = """
+steamnetworkingtypes.h: SetString "Just saves your pointer. Does NOT make a copy of the string",
+storing it in the record's m_val.
+"""
+
+[[retained_pointer]]
+function = "SteamAPI_SteamNetworkingConfigValue_t_SetPtr"
+param = "data"
+holder = "none"
+reason = """
+steamnetworkingtypes.h: SetPtr stores the pointer in m_val unchanged. Pointer settings hold
+callbacks and objects that Steam keeps once the setting is applied, after the record is gone.
 """

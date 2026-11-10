@@ -42,8 +42,8 @@ KINDS: tuple[Kind, ...] = (
 USABLE = frozenset({"verified", "derived", "partly verified"})
 # Why a declaration is skipped, by the category each Skip names.
 CATEGORIES = {
-    "callback": "takes or returns a C function pointer, which needs its Python callable kept "
-    "alive for as long as native code may call it",
+    "callback": "takes a C function pointer that no callback review says Steam calls back on "
+    "a thread making a call into Steam, or of a form a Python function cannot take",
     "callback-object": "involves a C++ interface the caller implements for Steam to call back, "
     "which needs a native shim",
     "by-value-shim": "passes a record by value where ctypes was shown to differ from the compiler",
@@ -56,6 +56,8 @@ CATEGORIES = {
     "game-server": "is a game server accessor, and pysteamsdk cannot start a game server yet",
     "no-signature": "is exported by the headers, but steam_api.json gives no signature",
     "invalid-name": "has a name that is not a usable Python identifier",
+    "retained-pointer": "keeps a pointer that Steam may use after any object a binding could "
+    "keep alive for it",
 }
 
 _CANONICAL = re.compile(r"(const )?([^*\[]+?)(\**)((?:\[\d+\])*)")
@@ -216,9 +218,9 @@ class _Unsupported(Exception):
 class _Base:
     """A type name resolved for a signature, before the signature's own pointers apply.
 
-    ``kind`` is "scalar", "char", "enum", "record", "array", "void", "interface" or "opaque";
-    ``expr`` names its ctypes type. A typedef of a pointer adds ``stars``, and
-    ``const`` says whether what it points to is const.
+    ``kind`` is "scalar", "char", "enum", "record", "array", "void", "interface", "opaque" or
+    "callback", a reviewed callback type; ``expr`` names its ctypes type. A typedef of a pointer
+    adds ``stars``, and ``const`` says whether what it points to is const.
     """
 
     kind: str
@@ -344,6 +346,10 @@ class _Generator:
         self.typedef_names = {item.name for item in metadata.typedefs}
         self.interfaces = {item.name: item for item in metadata.interfaces}
         self.callback_interfaces = _callback_interfaces(metadata)
+        self.hooks = {(hook.function, hook.param): hook for hook in metadata.hooks}
+        self.hook_types = {hook.typedef: hook for hook in metadata.hooks}
+        self.retained = {(item.function, item.param): item for item in metadata.retained}
+        self.kept: dict[str, tuple[int, ...]] = {}
         self.skipped: list[Skip] = []
         self.notes: list[Note] = []
         self.generated: dict[Kind, list[str]] = {kind: [] for kind in KINDS}
@@ -650,7 +656,12 @@ class _Generator:
             raise _Unsupported("unsupported-type", f"typedef {name} is {layout.type!r}")
         const, base, stars, dimensions = parsed
         if base == "function":
-            raise _Unsupported("callback", f"{name} is a C function pointer type")
+            hook = self.hook_types.get(name)
+            if hook is None:
+                message = f"{name} is a C function pointer type no callback review uses"
+                raise _Unsupported("callback", message)
+            self._callback(hook)
+            return _Base("callback", alias, name)
         if stars:
             if base == "void":
                 inner = _Base("void")
@@ -672,6 +683,8 @@ class _Generator:
         assert parsed is not None
         assert layout.size is not None
         _, base, stars, dimensions = parsed
+        if base == "function":
+            return self._callback(self.hook_types[name])
         if stars:
             found = self.typedef(name)
             if found.kind == "char" and stars == 1:
@@ -770,8 +783,38 @@ class _Generator:
             raise _Unsupported("unsupported-type", f"a pointer to a {found.name} pointer")
         return "ctypes.c_char" if found.kind == "char" else found.expr
 
-    def param(self, ctype: ir.CType) -> str:
+    def _callback(self, hook: ir.Hook) -> str:
+        """The prototype of a reviewed callback type. Steam's arguments are valid only during
+        the call, so the Python function gets copies: bytes for strings, records copied."""
+        returns, _, _ = self._resolve(hook.returns)
+        if returns.kind != "void" or hook.returns.pointers:
+            message = f"{hook.typedef} returns {hook.returns.spelling}, not nothing"
+            raise _Unsupported("unsupported-type", message)
+        args = []
+        for ctype in hook.params:
+            found, stars, _ = self._resolve(ctype)
+            if stars == 0 and found.kind in ("scalar", "char", "enum") and not ctype.reference:
+                args.append(found.expr)
+            elif stars == 1 and found.kind in ("char", "void", "record") and not ctype.reference:
+                args.append(
+                    {"char": "ctypes.c_char_p", "void": "ctypes.c_void_p"}.get(
+                        found.kind, f"ctypes.POINTER({found.expr})"
+                    )
+                )
+            else:
+                message = f"{hook.typedef} passes {ctype.spelling} to its callback"
+                raise _Unsupported("unsupported-type", message)
+        return f"bindings.Callback({_tuple(args) if args else '()'})"
+
+    def param(self, ctype: ir.CType, *, reviewed: bool = False) -> str:
         found, stars, const = self._resolve(ctype)
+        if found.kind == "callback":
+            if stars or ctype.reference:
+                raise _Unsupported("unsupported-type", f"a pointer to {ctype.base}")
+            if not reviewed:
+                message = f"{ctype.base} is a callback, and no callback review covers this call"
+                raise _Unsupported("callback", message)
+            return found.expr
         if ctype.reference:
             if stars or found.kind in ("void", "interface", "opaque"):
                 raise _Unsupported("unsupported-type", f"a reference to {ctype.spelling}")
@@ -795,6 +838,8 @@ class _Generator:
 
     def returns(self, ctype: ir.CType) -> str:
         found, stars, _ = self._resolve(ctype)
+        if found.kind == "callback":
+            raise _Unsupported("callback", f"returns {ctype.spelling}, a C function pointer")
         if ctype.reference:
             raise _Unsupported("unsupported-type", f"returns a reference, {ctype.spelling}")
         if stars == 0:
@@ -932,13 +977,24 @@ class _Generator:
                 returns = method.flat_returns or method.returns
                 comment = _signature(returns, method.flat_name, [("self", owner.name), *params])
                 where = "self"
+                kept = []
                 try:
                     argtypes = [self._self(owner)]
-                    for name, ctype in params:
+                    for index, (name, ctype) in enumerate(params, 1):
                         where = f"parameter {name}"
-                        argtypes.append(self.param(ctype))
+                        hook = (method.flat_name, name) in self.hooks
+                        argtypes.append(self.param(ctype, reviewed=hook))
+                        retained = self.retained.get((method.flat_name, name))
+                        if retained is not None and retained.holder == "none":
+                            message = "Steam keeps this pointer beyond any object a binding "
+                            message += "could keep alive for it"
+                            raise _Unsupported("retained-pointer", message)
+                        if retained is not None:
+                            kept.append(index)
                     where = "the result"
                     functions[method.flat_name] = (self.returns(returns), argtypes, comment)
+                    if kept:
+                        self.kept[method.flat_name] = tuple(kept)
                 except _Unsupported as exc:
                     problem = _Unsupported(exc.category, f"{where}: {exc.reason}")
                     self.skip("function", method.flat_name, problem)
@@ -1089,12 +1145,52 @@ class _Generator:
                 lines += [f"    {_text(name)}: (", f"        {restype},", "        ("]
                 lines += [f"            {argtype}," for argtype in argtypes]
                 lines += ["        ),", "    ),"]
+        lines += [
+            "}",
+            "",
+            "# The arguments, by position with self as 0, that a function keeps in the record self",
+            "# points to, so they must live as long as that record.",
+            "RETAINED = {",
+        ]
+        lines += [
+            f"    {_text(name)}: {_tuple(list(map(str, kept)))},"
+            for name, kept in self.kept.items()
+        ]
+        lines += [
+            "}",
+            "",
+            "# The ID Steam gives each callback record it delivers.",
+            "CALLBACK_IDS = {",
+        ]
+        lines += [f"    {python}: {number}," for python, number in self._callback_ids()]
+        lines += [
+            "}",
+            "",
+            "# The record each asynchronous call completes with.",
+            "CALL_RESULTS = {",
+        ]
+        lines += [f"    {_text(name)}: {python}," for name, python in self._call_results(functions)]
         lines += ["}", "", "# Flat functions left out, and why.", "SKIPPED = {"]
         for item in sorted(self.skipped, key=lambda skip: skip.name):
             if item.kind in ("function", "accessor", "export"):
                 lines.append(f"    {_text(item.name)}: {_text(item.reason)},")
         lines.append("}")
         return "\n".join(lines) + "\n"
+
+    def _callback_ids(self) -> list[tuple[str, int]]:
+        return [
+            (self.classes[struct.name].name, struct.callback_id)
+            for struct in sorted(self.metadata.structs, key=lambda item: item.name)
+            if struct.callback_id is not None and struct.name in self.classes
+        ]
+
+    def _call_results(self, functions: Mapping[str, object]) -> list[tuple[str, str]]:
+        found = [
+            (method.flat_name, self.classes[method.callresult].name)
+            for method in self.metadata.functions()
+            if method.callresult in self.classes and method.flat_name in functions
+        ]
+        return sorted(found)
 
 
 def _scoped(scope: str | None, name: str) -> str:

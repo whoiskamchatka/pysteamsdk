@@ -25,6 +25,7 @@ PACKAGE_FILES = (
     "_native/loader.py",
     "_native/lifecycle.py",
     "_native/bindings.py",
+    "_native/callbacks.py",
 )
 DECOYS = {
     "sdk/public/steam/steam_api.h": b"".join([b"//====== Copy", b"right Valve Corporation\n"]),

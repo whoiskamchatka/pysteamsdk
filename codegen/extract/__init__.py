@@ -93,6 +93,8 @@ def extract(
         external_types=(),
         shared_callbacks=(),
         by_value=(),
+        hooks=(),
+        retained=(),
         exports=tuple(export for export in scan.exports if export.name not in flat_names),
         abi=None,
         issues=(),

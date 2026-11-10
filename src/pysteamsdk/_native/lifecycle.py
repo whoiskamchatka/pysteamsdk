@@ -1,7 +1,8 @@
+import contextlib
 import ctypes
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,32 @@ _INIT_FAILURES: dict[int, tuple[type[InitError], str, str]] = {
 }
 
 
+# How many functions Steam is calling back on each thread. Steam called them from inside a call
+# into it that has not returned, so initializing or shutting down there would deadlock.
+_called_back = threading.local()
+
+
+@contextlib.contextmanager
+def called_back() -> Iterator[None]:
+    """Mark the current thread as running a function Steam called back."""
+    depth = getattr(_called_back, "depth", 0)
+    _called_back.depth = depth + 1
+    try:
+        yield
+    finally:
+        _called_back.depth = depth
+
+
+def inside_callback() -> bool:
+    """Whether the current thread is running a function Steam called back."""
+    return bool(getattr(_called_back, "depth", 0))
+
+
+def _refuse_inside_callback(action: str) -> None:
+    if inside_callback():
+        raise LifecycleError(f"Steam cannot be {action} from a function Steam is calling back.")
+
+
 class _Api:
     def __init__(self, library: ctypes.CDLL, path: Path) -> None:
         self.library = library
@@ -73,6 +100,8 @@ class Session:
         # Calls into Steam made through call() that have not returned yet.
         self._calls = 0
         self._idle = threading.Condition(threading.Lock())
+        # The callback dispatcher pysteamsdk._native.callbacks made for this session, if any.
+        self.dispatcher: object = None
 
     def call(self, name: str, function: Callable[..., Any], *args: object) -> Any:
         """Run ``function``, a call into Steam named ``name``, unless Steam has been shut down.
@@ -141,6 +170,7 @@ class Lifecycle:
 
     def init(self, library: str | os.PathLike[str] | None = None) -> Session:
         """Load the library if needed and initialize Steam."""
+        _refuse_inside_callback("initialized")
         with self._lock:
             if self._session is not None:
                 raise LifecycleError("Steam is already initialized in this process.")
@@ -173,6 +203,7 @@ class Lifecycle:
         Calls through Session.call are refused from the start, and any still in Steam are waited
         for, so none runs against a shut-down library.
         """
+        _refuse_inside_callback("shut down")
         with self._lock:
             session, self._session = self._session, None
             if session is None:
