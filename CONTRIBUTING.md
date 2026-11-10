@@ -150,16 +150,20 @@ set, so it fails without touching Steam. Point `STEAMWORKS_SDK` at the SDK folde
 STEAMWORKS_SDK=sdk pytest -m sdk          # PowerShell: $env:STEAMWORKS_SDK = "sdk"; pytest -m sdk
 ```
 
-The one test marked `steam` initializes your running Steam client as Spacewar (app ID 480),
-Valve's test app, so your Steam activity can show Spacewar for a few seconds. It is skipped
-unless all three of these are set, and CI never sets them:
+The two tests marked `steam` initialize your running Steam client as Spacewar (app ID 480),
+Valve's test app, so your Steam activity can show Spacewar for a few seconds. The second
+generates declarations from your SDK, so it needs the compiler `verify` uses, and calls Steam
+through them: it reads your Steam ID and persona name but reports only what kind they are,
+requests Spacewar's player count and your Spacewar stats, and starts relay network access, so
+that callbacks and call results arrive. They are skipped unless all three of these are set, and
+CI never sets them:
 
 - `STEAMWORKS_SDK` to the SDK folder
 - `STEAMWORKS_APP_ID` to exactly `480`
 - `PYSTEAMSDK_RUN_LIVE_STEAM` to exactly `1`
 
-It writes `steam_appid.txt` only into a new temporary folder and deletes it afterwards. Close
-any running game first, and set the variables only for the command that runs the test:
+They write `steam_appid.txt` only into a new temporary folder and delete it afterwards. Close
+any running game first, and set the variables only for the command that runs the tests:
 
 ```powershell
 $env:STEAMWORKS_SDK = "sdk"; $env:STEAMWORKS_APP_ID = "480"; $env:PYSTEAMSDK_RUN_LIVE_STEAM = "1"
