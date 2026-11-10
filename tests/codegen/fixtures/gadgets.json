@@ -27,6 +27,24 @@
      "fieldtype": "uint8"
     }
    ]
+  },
+  {
+   "callback_id": 9100,
+   "struct": "SteamAPICallCompleted_t",
+   "fields": [
+    {
+     "fieldname": "m_hAsyncCall",
+     "fieldtype": "GadgetCall_t"
+    },
+    {
+     "fieldname": "m_iCallback",
+     "fieldtype": "int"
+    },
+    {
+     "fieldname": "m_cubParam",
+     "fieldtype": "uint32"
+    }
+   ]
   }
  ],
  "consts": [
@@ -660,6 +678,39 @@
       }
      ],
      "returntype": "int32"
+    },
+    {
+     "methodname": "SetNotice",
+     "methodname_flat": "GadgetAPI_IGadgets_SetNotice",
+     "params": [
+      {
+       "paramname": "pfnNotice",
+       "paramtype": "GadgetNotice_t"
+      }
+     ],
+     "returntype": "void"
+    },
+    {
+     "methodname": "Notify",
+     "methodname_flat": "GadgetAPI_IGadgets_Notify",
+     "params": [
+      {
+       "paramname": "nTimes",
+       "paramtype": "int32"
+      }
+     ],
+     "returntype": "int32"
+    },
+    {
+     "methodname": "ReadValue",
+     "methodname_flat": "GadgetAPI_IGadgets_ReadValue",
+     "params": [
+      {
+       "paramname": "pValue",
+       "paramtype": "const GadgetValue_t *"
+      }
+     ],
+     "returntype": "uint32"
     }
    ]
   }
@@ -774,6 +825,30 @@
      "fieldname": "m_pNext",
      "fieldtype": "GadgetValue_t *"
     }
+   ],
+   "methods": [
+    {
+     "methodname": "SetText",
+     "methodname_flat": "GadgetAPI_GadgetValue_t_SetText",
+     "params": [
+      {
+       "paramname": "pchText",
+       "paramtype": "const char *"
+      }
+     ],
+     "returntype": "void"
+    },
+    {
+     "methodname": "SetData",
+     "methodname_flat": "GadgetAPI_GadgetValue_t_SetData",
+     "params": [
+      {
+       "paramname": "pData",
+       "paramtype": "void *"
+      }
+     ],
+     "returntype": "void"
+    }
    ]
   }
  ],
@@ -793,6 +868,10 @@
   {
    "typedef": "GadgetHook_t",
    "type": "void (*)(int32)"
+  },
+  {
+   "typedef": "GadgetNotice_t",
+   "type": "void (*)(int32, const GadgetReady_t *, const char *)"
   },
   {
    "typedef": "int16",

@@ -9,14 +9,17 @@ ctypes gets wrong may crash this process instead, which the test sees too.
 
 import ctypes
 import functools
+import gc
 import importlib.util
 import sys
+import weakref
 from collections.abc import Callable
 from types import ModuleType
 from typing import Any
 
 import pysteamsdk
 from pysteamsdk._native import bindings, lifecycle
+from pysteamsdk._native import callbacks as dispatch
 from pysteamsdk.errors import LifecycleError, NotInitializedError
 
 OWNER = 0x0110000100000042
@@ -74,6 +77,10 @@ def integers(api: Any, gadgets: Any, g: ModuleType) -> None:
     check(api.GadgetAPI_IGadgets_EchoDouble(gadgets, 2.0**-30), 2.0**-30, "double")
     check(api.GadgetAPI_IGadgets_Invert(gadgets, True), False, "bool true")
     check(api.GadgetAPI_IGadgets_Invert(gadgets, False), True, "bool false")
+    check(api.GadgetAPI_IGadgets_Invert(gadgets, 1), False, "an int as a bool")
+    for wrong in (None, "yes", 0.5):
+        invert = functools.partial(api.GadgetAPI_IGadgets_Invert, gadgets, wrong)
+        refused(invert, ctypes.ArgumentError, f"{wrong!r} as a bool")
     refused(lambda: api.GadgetAPI_IGadgets_Echo32(gadgets, 1.5), ctypes.ArgumentError, "float")
 
 
@@ -218,7 +225,7 @@ def records(api: Any, gadgets: Any, g: ModuleType) -> None:
     check(owner.m_id.m_all, OWNER, "the ID as 64 bits")
     check(bytes(owner.m_id.m_parts._storage), OWNER.to_bytes(8, "little"), "its bit-fields")
     check(api.GadgetAPI_IGadgets_GetOwner(gadgets), OWNER, "an ID passed as uint64")
-    check(api.GadgetAPI_IGadgets_Fetch(gadgets, 0x1234), 0x1234 ^ 0x5A5A, "an ID taken")
+    check(api.GadgetAPI_IGadgets_Fetch(gadgets, 0x1234) > 0, True, "an ID taken")
     refused(lambda: api.GadgetAPI_IGadgets_Fetch(gadgets, -1), ctypes.ArgumentError, "uint64")
 
 
@@ -294,6 +301,174 @@ def shutdown(api: Any, gadgets: Any, g: ModuleType) -> None:
         raise AssertionError("initialized twice")
 
 
+def joined(records: list[Any]) -> list[tuple[int, int]]:
+    return [(record.m_gadget.m_id.m_all, record.m_ubSeat) for record in records]
+
+
+def callbacks(api: Any, gadgets: Any, g: ModuleType) -> None:
+    steam = dispatch.callbacks(g, SESSION)
+    check(dispatch.callbacks(g, SESSION) is steam, True, "one dispatcher a session")
+    seen: list[Any] = []
+    registration = steam.register(g.GadgetJoined_t, seen.append)
+    check(steam.run(), 0, "nothing sent yet")
+    for _ in range(2):
+        api.GadgetAPI_IGadgets_Join(gadgets, g.GadgetJoined_t())
+    check(steam.run(), 2, "both callbacks delivered")
+    check(joined(seen), [(OWNER, 5)] * 2, "copies of what Steam sent")
+    api.GadgetAPI_IGadgets_Fetch(gadgets, 7)
+    check(steam.run(), 0, "a result no handler waits for")
+    results = SESSION.library.GadgetTest_Results
+    check(results(), 0, "is still fetched, so Steam can free it")
+    # Steam overwrote and freed its own copies; these are untouched.
+    check(joined(seen), [(OWNER, 5)] * 2, "copies outlive Steam's memory")
+    registration.cancel()
+    registration.cancel()
+    api.GadgetAPI_IGadgets_Join(gadgets, g.GadgetJoined_t())
+    check(steam.run(), 0, "a cancelled handler")
+    try:
+        steam.register(g.GadgetSpot_t, seen.append)
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("a record that is no callback was registered")
+
+
+def call_results(api: Any, gadgets: Any, g: ModuleType) -> None:
+    steam = dispatch.callbacks(g, SESSION)
+    check(g.CALL_RESULTS["GadgetAPI_IGadgets_Fetch"] is g.GadgetReady_t, True, "its record")
+    found: list[Any] = []
+    for gadget in (0x1234, 0):
+        steam.expect(api.GadgetAPI_IGadgets_Fetch(gadgets, gadget), g.GadgetReady_t, found.append)
+    check(steam.run(), 2, "both calls finished")
+    ready, failed = found
+    ok = int(g.EGadgetResult.k_EGadgetResultOK)
+    check((ready.m_eResult, ready.m_ulId), (ok, 0x1234 ^ 0x5A5A), "the result")
+    check(failed, None, "a call Steam reports failed")
+    call = api.GadgetAPI_IGadgets_Fetch(gadgets, 1)
+    steam.expect(call, g.GadgetReady_t, found.append)
+    for wrong in (0, call):
+        try:
+            steam.expect(wrong, g.GadgetReady_t, found.append)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"call {wrong} expected twice, or 0 expected")
+    check(steam.run(), 1, "a handler per call")
+
+
+def dispatch_errors(api: Any, gadgets: Any, g: ModuleType) -> None:
+    steam = dispatch.callbacks(g, SESSION)
+    seen: list[Any] = []
+
+    def fails(record: Any) -> None:
+        raise ValueError("a handler failed")
+
+    steam.register(g.GadgetJoined_t, fails)
+    steam.register(g.GadgetJoined_t, seen.append)
+    api.GadgetAPI_IGadgets_Join(gadgets, g.GadgetJoined_t())
+    SESSION.library.GadgetTest_PostOdd()
+    wrong: list[Any] = []
+    # Fetch completes with GadgetReady_t, not the record expected here.
+    steam.expect(api.GadgetAPI_IGadgets_Fetch(gadgets, 5), g.GadgetJoined_t, wrong.append)
+    try:
+        steam.run()
+    except ExceptionGroup as group:
+        kinds = sorted(type(error).__name__ for error in group.exceptions)
+        check(kinds, ["BindingError", "BindingError", "ValueError"], "every failure at once")
+    else:
+        raise AssertionError("nothing raised")
+    check(joined(seen), [(OWNER, 5)], "the other handler still ran")
+    check(wrong, [None], "a call whose record is not the one expected")
+
+
+def shutdown_from_a_handler(api: Any, gadgets: Any, g: ModuleType) -> None:
+    steam = dispatch.callbacks(g, SESSION)
+    later: list[Any] = []
+    steam.register(g.GadgetJoined_t, lambda record: pysteamsdk.shutdown())
+    steam.register(g.GadgetJoined_t, later.append)
+    for _ in range(2):
+        api.GadgetAPI_IGadgets_Join(gadgets, g.GadgetJoined_t())
+    check(steam.run(), 1, "only the handler that shut Steam down")
+    check((later, pysteamsdk.is_initialized()), ([], False), "nothing delivered after shutdown")
+    for after in (steam.run, lambda: steam.register(g.GadgetJoined_t, later.append)):
+        try:
+            after()
+        except NotInitializedError:
+            pass
+        else:
+            raise AssertionError("dispatched after shutdown")
+
+
+def callback_functions(api: Any, gadgets: Any, g: ModuleType) -> None:
+    seen: list[tuple[int, Any, bytes]] = []
+    notice = api.GadgetAPI_IGadgets_SetNotice
+    notice(gadgets, lambda code, ready, text: seen.append((code, ready, text)))
+    check(api.GadgetAPI_IGadgets_Notify(gadgets, 2), 2, "called back twice")
+    busy = int(g.EGadgetResult.k_EGadgetResultBusy)
+    check(
+        [(code, ready.m_eResult, ready.m_ulId, text) for code, ready, text in seen],
+        [(0, busy, 100, b"notice 0"), (1, busy, 101, b"notice 1")],
+        "copies of what Steam passed, which it has overwritten since",
+    )
+    # Nothing else refers to this function, so only pysteamsdk keeps it alive for Steam.
+    counted: list[int] = []
+    notice(gadgets, lambda code, ready, text: counted.append(code))
+    gc.collect()
+    check((api.GadgetAPI_IGadgets_Notify(gadgets, 1), counted), (1, [0]), "a kept callback")
+    nested: list[int] = []
+    notice(gadgets, lambda code, r, t: nested.append(api.GadgetAPI_IGadgets_Echo32(gadgets, 40)))
+    check((api.GadgetAPI_IGadgets_Notify(gadgets, 1), nested), (1, [40]), "a call into Steam")
+    raised: list[BaseException | None] = []
+    previous = sys.unraisablehook
+    sys.unraisablehook = lambda args: raised.append(args.exc_value)
+
+    def fails(code: int, ready: Any, text: bytes) -> None:
+        raise ValueError("a callback failed")
+
+    def stops(code: int, ready: Any, text: bytes) -> None:
+        pysteamsdk.shutdown()
+
+    def dispatches(code: int, ready: Any, text: bytes) -> None:
+        dispatch.callbacks(g, SESSION).run()
+
+    try:
+        for function, times in ((fails, 2), (stops, 1), (dispatches, 1)):
+            notice(gadgets, function)
+            check(api.GadgetAPI_IGadgets_Notify(gadgets, times), times, function.__name__)
+    finally:
+        sys.unraisablehook = previous
+    names = [type(error).__name__ for error in raised]
+    check(names, ["ValueError", "ValueError", "LifecycleError", "LifecycleError"], "reported")
+    check(pysteamsdk.is_initialized(), True, "a callback cannot shut Steam down")
+    notice(gadgets, None)
+    check(api.GadgetAPI_IGadgets_Notify(gadgets, 1), 0, "no callback")
+    refused(lambda: notice(gadgets, 5), ctypes.ArgumentError, "an int as a callback")
+
+
+def retained(api: Any, gadgets: Any, g: ModuleType) -> None:
+    value = g.GadgetValue_t()
+    text = ctypes.create_string_buffer(b"kept text")
+    alive = weakref.ref(text)
+    api.GadgetAPI_GadgetValue_t_SetText(value, text)
+    del text
+    gc.collect()
+    check(alive() is not None, True, "kept alive with the record")
+    check(api.GadgetAPI_IGadgets_ReadValue(gadgets, value), 9, "the string Steam points to")
+    api.GadgetAPI_GadgetValue_t_SetText(value, b"replaced")
+    gc.collect()
+    check(alive(), None, "released once the record points elsewhere")
+    check(api.GadgetAPI_IGadgets_ReadValue(gadgets, value), 8, "the new string")
+    array = (g.GadgetValue_t * 2)()
+    api.GadgetAPI_GadgetValue_t_SetText(array[1], b"in an array")
+    gc.collect()
+    check(api.GadgetAPI_IGadgets_ReadValue(gadgets, array[1]), 11, "kept with the array")
+    view = g.GadgetValue_t.from_buffer(bytearray(ctypes.sizeof(g.GadgetValue_t)))
+    for wrong in (ctypes.pointer(value), ctypes.byref(value), view):
+        set_text = functools.partial(api.GadgetAPI_GadgetValue_t_SetText, wrong, b"lost")
+        refused(set_text, TypeError, f"a {type(wrong).__name__} to keep a string in")
+    check(hasattr(api, "GadgetAPI_GadgetValue_t_SetData"), False, "a pointer nothing can keep")
+
+
 SCENARIOS: dict[str, Callable[[Any, Any, ModuleType], None]] = {
     function.__name__: function
     for function in (
@@ -308,6 +483,12 @@ SCENARIOS: dict[str, Callable[[Any, Any, ModuleType], None]] = {
         interfaces,
         skipped,
         shutdown,
+        callbacks,
+        call_results,
+        dispatch_errors,
+        shutdown_from_a_handler,
+        callback_functions,
+        retained,
     )
 }
 

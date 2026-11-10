@@ -42,6 +42,29 @@ declaration = "incomplete"
 header = "gadgets.h"
 reason = "Declared and never defined."
 
+[[external_type]]
+name = "CallbackMsg_t"
+declaration = "struct"
+header = "gadgets.h"
+reason = "The manual dispatch message the runtime reads."
+
+[[callback]]
+function = "GadgetAPI_IGadgets_SetNotice"
+param = "pfnNotice"
+reason = "Notify calls it on the thread that calls Notify."
+
+[[retained_pointer]]
+function = "GadgetAPI_GadgetValue_t_SetText"
+param = "pchText"
+holder = "record"
+reason = "Stores the pointer in the record's m_val."
+
+[[retained_pointer]]
+function = "GadgetAPI_GadgetValue_t_SetData"
+param = "pData"
+holder = "none"
+reason = "Invented, to see that such a function is not bound."
+
 [[by_value]]
 record = "GadgetSpot_t"
 direct = ["{target}"]
@@ -57,8 +80,10 @@ reason = "Invented, to see that a shim review keeps the function out."
 SKIPPED = {
     "GadgetAPI_IGadgetListener_OnDone": "callback-object",
     "GadgetAPI_IGadgets_Listen": "callback-object",
+    # No review says when SetHook's callback runs; one does for SetNotice's.
     "GadgetAPI_IGadgets_SetHook": "callback",
     "GadgetHook_t": "callback",
+    "GadgetAPI_GadgetValue_t_SetData": "retained-pointer",
     "GadgetAPI_IGadgets_Area": "by-value-unverified",
     "GadgetAPI_IGadgets_PairSum": "by-value-shim",
     "GadgetAPI_IGadgets_ReadTicket": "opaque",
@@ -81,6 +106,12 @@ SCENARIOS = [
     "interfaces",
     "skipped",
     "shutdown",
+    "callbacks",
+    "call_results",
+    "dispatch_errors",
+    "shutdown_from_a_handler",
+    "callback_functions",
+    "retained",
 ]
 
 
@@ -166,8 +197,8 @@ def test_every_declaration_is_generated_or_skipped_with_its_reason(gadgets: Gadg
     skipped = {item.name for item in generated.skipped}
     assert set(generated.generated["function"]) == flat - skipped
     assert set(generated.generated["accessor"]) == accessors - skipped
-    assert generated.totals["function"] == len(flat) == 47
-    assert len(generated.generated["function"]) == 39
+    assert generated.totals["function"] == len(flat) == 52
+    assert len(generated.generated["function"]) == 43
     notes = [(item.name, item.message) for item in generated.notes]
     assert (
         "CGadgetID::GadgetID_t::GadgetIDParts_t",

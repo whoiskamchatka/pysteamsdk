@@ -44,7 +44,13 @@ def session() -> Session:
 def declarations(functions: dict[str, Any], **values: object) -> ModuleType:
     module = ModuleType("declarations")
     module.__dict__.update(
-        {"TARGET": TARGET, "PROTOCOL": bindings.PROTOCOL, "FUNCTIONS": functions, "SKIPPED": {}}
+        {
+            "TARGET": TARGET,
+            "PROTOCOL": bindings.PROTOCOL,
+            "FUNCTIONS": functions,
+            "RETAINED": {},
+            "SKIPPED": {},
+        }
     )
     module.__dict__.update(values)
     return module

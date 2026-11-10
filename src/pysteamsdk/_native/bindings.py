@@ -11,22 +11,24 @@ shutdown waits for calls still in Steam; an interface pointer comes back as an I
 refuses to be used once its session closes. Arguments are converted strictly: an integer must
 fit its C type, bytes never go where native code may write, and a reference is never null.
 Pointers that functions return stay pointers borrowed from native code; nothing is copied until
-the caller reads it. A pointer passed in is valid only during the call, so a caller must keep
-alive whatever native code holds on to.
+the caller reads it. A pointer passed in is valid only during the call, except where a reviewed
+override says the function keeps it: an argument kept in a record is kept alive with that
+record, and a Python function passed as a callback is kept for the rest of the process.
 """
 
 import ctypes
 import operator
+import threading
 from collections.abc import Callable, Mapping
 from types import ModuleType
 from typing import Any, SupportsIndex
 
-from pysteamsdk._native.lifecycle import Session
+from pysteamsdk._native.lifecycle import Session, called_back
 from pysteamsdk._native.loader import _LIBRARIES, _host
 from pysteamsdk.errors import MissingExportsError, NotInitializedError, SteamError
 
 # The version of the declarations format, which the generator writes as PROTOCOL.
-PROTOCOL = 1
+PROTOCOL = 2
 
 _SYSTEMS = {"win32": "windows", "linux": "linux", "darwin": "macos"}
 # ctypes' type codes for integers; lower case is signed.
@@ -179,10 +181,80 @@ class _Integer:
         return self.type(number)
 
 
+class _Boolean:
+    """A bool parameter, which takes integers, but not None or anything else merely truthy."""
+
+    __slots__ = ()
+
+    def from_param(self, value: object) -> object:
+        if not isinstance(value, SupportsIndex):
+            raise TypeError(f"expected a bool, not {type(value).__name__}")
+        return ctypes.c_bool(operator.index(value) != 0)
+
+
 _integers: dict[Any, _Integer] = {}
+_BOOLEAN = _Boolean()
+
+
+class Callback:
+    """A C function pointer type whose functions Steam calls back, made from Python functions.
+
+    Steam keeps the pointer it is given, and may still be running an old callback while a new one
+    is set, so each function is kept for the rest of the process. What Steam passes is valid only
+    during the call, so the function gets copies: a string as bytes, a record as its own copy.
+    Steam has no way to receive an exception, so one raised goes to sys.unraisablehook.
+    """
+
+    __slots__ = ("_copies", "prototype")
+
+    def __init__(self, argtypes: tuple[Any, ...]) -> None:
+        self.prototype = ctypes.CFUNCTYPE(None, *argtypes)
+        self._copies = tuple(
+            argtype._type_
+            if isinstance(argtype, type) and issubclass(argtype, ctypes._Pointer)
+            else None
+            for argtype in argtypes
+        )
+
+    def from_param(self, value: object) -> object:
+        if value is None:
+            return None
+        if not callable(value):
+            raise TypeError(f"expected a function, not {type(value).__name__}")
+        key = (id(self), id(value))
+        with _callbacks_lock:
+            found = _callbacks.get(key)
+            if found is None:
+                found = _callbacks[key] = (value, self.prototype(self._trampoline(value)))
+        return found[1]
+
+    def _trampoline(self, function: Callable[..., object]) -> Callable[..., None]:
+        copies = self._copies
+
+        def call(*args: Any) -> None:
+            values = [_copy(record, arg) for record, arg in zip(copies, args, strict=True)]
+            with called_back():
+                function(*values)
+
+        return call
+
+
+def _copy(record: Any, arg: Any) -> Any:
+    # A record pointer becomes a copy of the record, or None for a null pointer.
+    if record is None:
+        return arg
+    return record.from_buffer_copy(arg.contents) if arg else None
+
+
+# Every Python function made into a callback, and the pointer Steam got for it, by callback type
+# and function. They are never released, since Steam may call them until the process exits.
+_callbacks: dict[tuple[int, int], tuple[object, object]] = {}
+_callbacks_lock = threading.Lock()
 
 
 def _argument(argtype: Any) -> Any:
+    if argtype is ctypes.c_bool:
+        return _BOOLEAN
     if (
         isinstance(argtype, type)
         and issubclass(argtype, ctypes._SimpleCData)
@@ -198,7 +270,7 @@ def _argument(argtype: Any) -> Any:
 class Function:
     """A flat function bound for one session."""
 
-    __slots__ = ("_call", "_returns", "_session", "name")
+    __slots__ = ("_call", "_kept", "_returns", "_session", "name")
 
     def __init__(
         self,
@@ -206,21 +278,47 @@ class Function:
         call: Callable[..., Any],
         session: Session,
         returns: type[Interface] | None = None,
+        kept: tuple[int, ...] = (),
     ) -> None:
         self.name = name
         self._call = call
         self._session = session
         self._returns = returns
+        self._kept = kept
 
     def __call__(self, *args: object) -> Any:
+        holder = _holder(self.name, args[0]) if self._kept and args else None
         # Arguments are converted inside the call too, so a stale handle is refused there.
         result = self._session.call(self.name, self._call, *args)
+        if holder is not None:
+            kept = holder.__dict__.setdefault("_pysteamsdk_kept", {})
+            for index in self._kept:
+                kept[ctypes.addressof(args[0]), index] = args[index]  # type: ignore[arg-type]
         if self._returns is not None and result is not None:
             return self._returns(self._session, result)
         return result
 
     def __repr__(self) -> str:
         return f"<bound {self.name}>"
+
+
+def _holder(name: str, record: object) -> Any:
+    """The Python object that owns the memory of ``record``, which a call keeps a pointer in.
+
+    Only memory Python allocated can be kept alive with what it points to, so ``record`` must be
+    a record created in Python or a part of one, never a view of native memory.
+    """
+    owner: Any = record if isinstance(record, ctypes.Structure | ctypes.Union) else None
+    while owner is not None and owner._b_base_ is not None:
+        # A record reached through a pointer lives wherever the pointer points.
+        base = owner._b_base_
+        owner = base if isinstance(base, ctypes.Structure | ctypes.Union | ctypes.Array) else None
+    if owner is None or not owner._b_needsfree_:
+        raise TypeError(
+            f"{name} keeps a pointer in the record it is given, so pass a record created in "
+            "Python, or part of one, for what it points to to be kept alive with it"
+        )
+    return owner
 
 
 class Bindings:
@@ -326,8 +424,9 @@ def bind(declarations: ModuleType, session: Session) -> Bindings:
     if check != (host_target(), PROTOCOL):
         message = f"{declarations.__name__} is not a declarations module for this process."
         raise BindingError(message)
+    retained = declarations.RETAINED
     functions = {
-        name: Function(name, call, session, returns)
+        name: Function(name, call, session, returns, retained.get(name, ()))
         for name, (call, returns) in attach(declarations, session.library).items()
     }
     return Bindings(functions, declarations.SKIPPED)

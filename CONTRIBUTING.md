@@ -114,6 +114,15 @@ the callee receives; the SDK tests check that the shapes still match. The `by_va
 the record correctly, `shim` where it was shown not to. Any other target is unverified, and a
 binding generator must not pass the record by value there either.
 
+Two more kinds of entry decide what pointers a binding may hand to Steam. A `callback` entry
+allows a function pointer parameter, citing header evidence that Steam calls it back on the
+thread of a call into Steam; its signature is read from the typedef's declaration. A
+`retained_pointer` entry marks a pointer the function keeps: with `holder = "record"` the binding
+keeps the argument alive with the record that holds the pointer, and with `"none"` the function
+is not bound. `pysteamsdk._native.callbacks` delivers callbacks and call results through manual
+dispatch, copying each before Steam frees it; `tests/codegen/test_bindings_native.py` exercises
+both against the invented gadget library.
+
 `codegen/overrides.toml` records reviewed corrections where the SDK's metadata is incomplete,
 such as a missing interface version or types `steam_api.json` uses without describing. Each
 entry needs SDK evidence and a reason, and is checked against the SDK on every run: when a new

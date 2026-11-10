@@ -6,6 +6,10 @@
 
 #include <string.h>
 
+#include <deque>
+#include <map>
+#include <vector>
+
 #if defined( _WIN32 )
 #define TEST_API extern "C" __declspec( dllexport )
 #else
@@ -38,6 +42,35 @@ bool Valid( IGadgets *self )
 	++g_calls;
 	return self == &g_gadgets;
 }
+
+// Manual dispatch as steam_api.h describes it: callbacks queue until fetched one at a time, and a
+// finished call's result waits until SteamAPI_ManualDispatch_GetAPICallResult takes it.
+struct Message
+{
+	int id;
+	std::vector<uint8> data;
+	bool failed;
+};
+
+std::deque<Message> g_queue;
+std::map<uint64, Message> g_results;
+uint8 *g_current = 0;
+int g_currentSize = 0;
+bool g_manual = false;
+GadgetCall_t g_lastCall = 0x1000;
+GadgetNotice_t g_notice = 0;
+// What Notify passes its callback, overwritten once the callback returns.
+GadgetReady_t g_noticeReady;
+char g_noticeText[ 16 ];
+
+template < class T > Message Make( int id, const T &value, bool failed = false )
+{
+	Message message;
+	message.id = id;
+	message.data.assign( (const uint8 *)&value, (const uint8 *)&value + sizeof( T ) );
+	message.failed = failed;
+	return message;
+}
 }
 
 TEST_API int SteamAPI_InitFlat( char *pOutErrMsg )
@@ -51,15 +84,55 @@ TEST_API int SteamAPI_InitFlat( char *pOutErrMsg )
 TEST_API void SteamAPI_Shutdown() { g_initialized = false; }
 TEST_API int32 SteamAPI_GetHSteamPipe() { return 1; }
 TEST_API int32 SteamAPI_GetHSteamUser() { return 2; }
-TEST_API void SteamAPI_ManualDispatch_Init() {}
+TEST_API void SteamAPI_ManualDispatch_Init() { g_manual = true; }
 TEST_API void SteamAPI_ManualDispatch_RunFrame( int32 ) {}
-TEST_API bool SteamAPI_ManualDispatch_GetNextCallback( int32, void * ) { return false; }
-TEST_API void SteamAPI_ManualDispatch_FreeLastCallback( int32 ) {}
-TEST_API bool SteamAPI_ManualDispatch_GetAPICallResult( int32, uint64, void *, int, int, bool * )
+
+TEST_API bool SteamAPI_ManualDispatch_GetNextCallback( int32 pipe, CallbackMsg_t *pCallbackMsg )
 {
-	return false;
+	// The last message must be freed first.
+	if ( !g_manual || pipe != 1 || g_current || g_queue.empty() )
+		return false;
+	Message next = g_queue.front();
+	g_queue.pop_front();
+	g_currentSize = (int)next.data.size();
+	g_current = new uint8[ g_currentSize + 1 ];
+	memcpy( g_current, next.data.data(), next.data.size() );
+	pCallbackMsg->m_hSteamUser = 2;
+	pCallbackMsg->m_iCallback = next.id;
+	pCallbackMsg->m_pubParam = g_current;
+	pCallbackMsg->m_cubParam = g_currentSize;
+	return true;
 }
+
+TEST_API void SteamAPI_ManualDispatch_FreeLastCallback( int32 )
+{
+	if ( !g_current )
+		return;
+	memset( g_current, 0xdd, g_currentSize );
+	delete[] g_current;
+	g_current = 0;
+}
+
+TEST_API bool SteamAPI_ManualDispatch_GetAPICallResult( int32 pipe, uint64 hCall, void *pCallback, int cubCallback, int iCallbackExpected, bool *pbFailed )
+{
+	std::map<uint64, Message>::iterator found = g_results.find( hCall );
+	if ( pipe != 1 || found == g_results.end() || found->second.id != iCallbackExpected || (int)found->second.data.size() != cubCallback )
+		return false;
+	memcpy( pCallback, found->second.data.data(), cubCallback );
+	*pbFailed = found->second.failed;
+	g_results.erase( found );
+	return true;
+}
+
 TEST_API uint32 GadgetTest_Calls() { return g_calls; }
+TEST_API uint32 GadgetTest_Results() { return (uint32)g_results.size(); }
+
+// A callback whose size no declaration matches, as from a Steam client newer than the SDK.
+TEST_API void GadgetTest_PostOdd()
+{
+	uint8 odd[ 3 ] = { 1, 2, 3 };
+	g_queue.push_back( Make( GadgetJoined_t::k_iCallback, odd ) );
+}
 
 S_API void GadgetAPI_RunFrame() {}
 
@@ -220,7 +293,23 @@ S_API void GadgetAPI_IGadgets_Listen( IGadgets *self, IGadgetListener *pListener
 S_API bool GadgetAPI_IGadgets_ReadTicket( IGadgets *self, GadgetTicket *pTicket ) { return Valid( self ) && pTicket; }
 S_API bool GadgetAPI_IGadgets_Inspect( IGadgets *self, GadgetMystery_t *pMystery ) { return Valid( self ) && pMystery; }
 S_API IGadgetBox *GadgetAPI_IGadgets_OpenBox( IGadgets *self ) { return Valid( self ) ? &g_box : 0; }
-S_API GadgetCall_t GadgetAPI_IGadgets_Fetch( IGadgets *self, uint64_gadgetid gadgetID ) { return Valid( self ) ? gadgetID ^ 0x5a5a : 0; }
+// Completes at once, with GadgetReady_t, and fails for gadget 0.
+S_API GadgetCall_t GadgetAPI_IGadgets_Fetch( IGadgets *self, uint64_gadgetid gadgetID )
+{
+	if ( !Valid( self ) )
+		return 0;
+	GadgetCall_t call = ++g_lastCall;
+	GadgetReady_t ready;
+	ready.m_eResult = gadgetID ? k_EGadgetResultOK : k_EGadgetResultFail;
+	ready.m_ulId = gadgetID ^ 0x5a5a;
+	g_results[ call ] = Make( GadgetReady_t::k_iCallback, ready, gadgetID == 0 );
+	SteamAPICallCompleted_t completed;
+	completed.m_hAsyncCall = call;
+	completed.m_iCallback = GadgetReady_t::k_iCallback;
+	completed.m_cubParam = sizeof( GadgetReady_t );
+	g_queue.push_back( Make( SteamAPICallCompleted_t::k_iCallback, completed ) );
+	return call;
+}
 S_API uint64_gadgetid GadgetAPI_IGadgets_GetOwner( IGadgets *self ) { return Valid( self ) ? kOwner : 0; }
 
 S_API bool GadgetAPI_IGadgets_GetOwnerInto( IGadgets *self, CGadgetID *pOwner )
@@ -246,6 +335,7 @@ S_API bool GadgetAPI_IGadgets_Join( IGadgets *self, GadgetJoined_t *pJoined )
 		return false;
 	memcpy( (void *)&pJoined->m_gadget, &kOwner, sizeof( kOwner ) );
 	pJoined->m_ubSeat = 5;
+	g_queue.push_back( Make( GadgetJoined_t::k_iCallback, *pJoined ) );
 	return true;
 }
 
@@ -296,3 +386,42 @@ S_API void GadgetAPI_IGadgetListener_OnDone( IGadgetListener *self, int32 code )
 
 S_API void GadgetAPI_GadgetAddress_t_Clear( GadgetAddress_t *self ) { memset( (void *)self, 0, sizeof( *self ) ); }
 S_API bool GadgetAPI_GadgetAddress_t_IsLoopback( GadgetAddress_t *self ) { return self->m_unIPv4 == 0x0100007f; }
+
+S_API void GadgetAPI_IGadgets_SetNotice( IGadgets *self, GadgetNotice_t pfnNotice )
+{
+	if ( Valid( self ) )
+		g_notice = pfnNotice;
+}
+
+S_API int32 GadgetAPI_IGadgets_Notify( IGadgets *self, int32 nTimes )
+{
+	if ( !Valid( self ) || !g_notice )
+		return 0;
+	for ( int32 i = 0; i < nTimes; ++i )
+	{
+		g_noticeReady.m_eResult = k_EGadgetResultBusy;
+		g_noticeReady.m_ulId = 100 + i;
+		memcpy( g_noticeText, "notice 0", 9 );
+		g_noticeText[ 7 ] = (char)( '0' + i % 10 );
+		g_notice( i, &g_noticeReady, g_noticeText );
+		memset( &g_noticeReady, 0xdd, sizeof( g_noticeReady ) );
+		memset( g_noticeText, 0xdd, sizeof( g_noticeText ) );
+	}
+	return nTimes;
+}
+
+S_API uint32 GadgetAPI_IGadgets_ReadValue( IGadgets *self, const GadgetValue_t *pValue )
+{
+	if ( !Valid( self ) || !pValue || !pValue->m_val.m_psz )
+		return 0xffffffff;
+	return (uint32)strlen( pValue->m_val.m_psz );
+}
+
+// Like SteamNetworkingConfigValue_t::SetString, these keep the pointer they are given.
+S_API void GadgetAPI_GadgetValue_t_SetText( GadgetValue_t *self, const char *pchText )
+{
+	self->m_eKind = k_EGadgetKindText;
+	self->m_val.m_psz = pchText;
+}
+
+S_API void GadgetAPI_GadgetValue_t_SetData( GadgetValue_t *self, void *pData ) { self->m_val.m_p = pData; }

@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 # Bumped whenever the serialized shape or the meaning of a field changes.
-FORMAT = 4
+FORMAT = 5
 # Metadata from SDK 1.65 nests 11 levels deep; each nested function pointer adds two more and
 # each anonymous record inside another three.
 MAX_DEPTH = 32
@@ -28,6 +28,7 @@ MAX_DEPTH = 32
 Severity = Literal["error", "warning", "note"]
 SEVERITIES: tuple[Severity, ...] = ("error", "warning", "note")
 Declaration = Literal["class", "struct", "typedef", "incomplete"]
+Holder = Literal["record", "none"]
 RecordKind = Literal["struct", "union", "class"]
 LayoutStatus = Literal["complete", "opaque", "unsupported"]
 
@@ -215,6 +216,37 @@ class ByValue:
 
 
 @dataclass(frozen=True, slots=True)
+class Hook:
+    """A function pointer parameter that an override says Steam calls back safely.
+
+    The parameter's type is the typedef ``typedef``, whose signature, ``returns`` and ``params``,
+    comes from its declaration in the headers. Steam keeps the pointer it is given.
+    """
+
+    function: str
+    param: str
+    typedef: str
+    returns: CType
+    params: tuple[CType, ...]
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class Retained:
+    """A pointer parameter whose target, an override says, the flat function keeps.
+
+    ``holder`` is "record" when the function keeps it in the record its self parameter points
+    to, so it must live as long as that record, or "none" when Steam may use it after any object
+    a binding could tie it to is gone.
+    """
+
+    function: str
+    param: str
+    holder: Holder
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
 class Export:
     """A function a header exports with S_API that steam_api.json does not describe."""
 
@@ -334,6 +366,8 @@ class Metadata:
     external_types: tuple[ExternalType, ...]
     shared_callbacks: tuple[SharedCallback, ...]
     by_value: tuple[ByValue, ...]
+    hooks: tuple[Hook, ...]
+    retained: tuple[Retained, ...]
     exports: tuple[Export, ...]
     # None when the metadata was extracted without computing layouts.
     abi: Abi | None

@@ -50,12 +50,16 @@ STANDARD = frozenset(
         "uint64_t",
     }
 )
+# Records pysteamsdk's runtime reads itself rather than through a flat function: the message
+# SteamAPI_ManualDispatch_GetNextCallback fills.
+RUNTIME_TYPES = frozenset({"CallbackMsg_t"})
 
 
 def validate(metadata: ir.Metadata) -> list[ir.Issue]:
     return [
         *_duplicates(metadata),
         *_callbacks(metadata),
+        *_reviewed_parameters(metadata),
         *_external_types(metadata),
         *_unresolved_types(metadata),
         *_typedef_cycles(metadata),
@@ -195,6 +199,39 @@ def _callbacks(metadata: ir.Metadata) -> Iterator[ir.Issue]:
                 yield ir.Issue("error", "unknown-callback-struct", message, function.source)
 
 
+def _reviewed_parameters(metadata: ir.Metadata) -> Iterator[ir.Issue]:
+    """Each callback and retained pointer override must name a parameter of the right kind."""
+    owners: tuple[ir.Interface | ir.Struct, ...] = (*metadata.interfaces, *metadata.structs)
+    methods = {method.flat_name: (owner, method) for owner in owners for method in owner.methods}
+    entries: list[tuple[str, ir.Hook | ir.Retained]] = [
+        *(("callback", hook) for hook in metadata.hooks),
+        *(("retained pointer", entry) for entry in metadata.retained),
+    ]
+    seen: set[tuple[str, str, str]] = set()
+    for kind, entry in entries:
+        key = (kind, entry.function, entry.param)
+        found = methods.get(entry.function)
+        params = {p.name: p.flat_type or p.type for p in found[1].params} if found else {}
+        ctype = params.get(entry.param)
+        if key in seen:
+            problem = "is reviewed twice"
+        elif ctype is None:
+            problem = "is not a parameter of a flat function"
+        elif isinstance(entry, ir.Hook) and (ctype.base != entry.typedef or ctype.pointers):
+            problem = f"is {ctype.spelling}, not {entry.typedef}"
+        elif isinstance(entry, ir.Retained) and not (ctype.pointers or ctype.reference):
+            problem = f"is {ctype.spelling}, not a pointer"
+        elif isinstance(entry, ir.Retained) and entry.holder == "record":
+            assert found is not None
+            problem = "" if isinstance(found[0], ir.Struct) else "has no record to hold it"
+        else:
+            problem = ""
+        seen.add(key)
+        if problem:
+            message = f"{kind} {entry.function} {entry.param} {problem}"
+            yield ir.Issue("error", "invalid-review", message, entry.source)
+
+
 def _external_types(metadata: ir.Metadata) -> Iterator[ir.Issue]:
     uses: dict[str, list[ir.CType]] = defaultdict(list)
     for ctype, _ in type_uses(metadata):
@@ -202,7 +239,7 @@ def _external_types(metadata: ir.Metadata) -> Iterator[ir.Issue]:
             uses[part.base].append(part)
     for external in metadata.external_types:
         found = uses.get(external.name, [])
-        if not found:
+        if not found and external.name not in RUNTIME_TYPES:
             message = f"nothing uses {external.name}"
             yield ir.Issue("error", "unused-external-type", message, external.source)
         elif external.declaration == "incomplete" and any(

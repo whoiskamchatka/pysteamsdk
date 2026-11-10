@@ -52,6 +52,7 @@ def test_import_loads_no_native_library() -> None:
 
         import pysteamsdk
         import pysteamsdk._native.bindings
+        import pysteamsdk._native.callbacks
         import pysteamsdk._native.loader
         import pysteamsdk.errors
 
